@@ -15,6 +15,7 @@ import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { ref } from 'vue'
+import { defaultExpression } from '@/models/circe-types'
 
 // Mock i18n composable with real translations
 vi.mock('@/composables/useI18n', async () => {
@@ -72,6 +73,12 @@ vi.mock('@/services/cohort-definition.service', () => ({
   validateCohortDefinition: vi.fn().mockResolvedValue({ success: true, data: { warnings: [] } }),
   assignTagToCohort: vi.fn().mockResolvedValue({ success: true, data: undefined }),
   unassignTagFromCohort: vi.fn().mockResolvedValue({ success: true, data: undefined }),
+}))
+
+vi.mock('@/services/cohort-sql.service', () => ({
+  generateCohortSql: vi.fn().mockResolvedValue({ success: true, data: 'select 1' }),
+  translateSql: vi.fn().mockResolvedValue({ success: true, data: 'select 1' }),
+  SQLRENDER_DIALECTS: [],
 }))
 
 vi.mock('@/services/concept-set.service', () => ({
@@ -265,6 +272,26 @@ describe('CohortBuilder', () => {
     await wrapper.vm.$nextTick()
     const vm = wrapper.vm as any
     expect(vm.cohortId).toBe(42)
+  })
+
+  it('loadCohort seeds the cohort name from the route query when present', async () => {
+    await router.push('/cohorts/new?name=Seeded Cohort')
+
+    const wrapper = createWrapper()
+    await flushPromises()
+    const setup = getSetup(wrapper)
+
+    expect(setup.cohortName).toBe('Seeded Cohort')
+  })
+
+  it('version count watcher falls back to zero when loading versions fails', async () => {
+    const cohortDefinitionVersionsService = await import('@/services/cohort-definition-versions.service')
+    vi.mocked(cohortDefinitionVersionsService.getVersions).mockRejectedValueOnce(new Error('boom'))
+
+    const wrapper = createWrapper({ id: '42' })
+    await flushPromises()
+
+    expect((wrapper.vm as any).versionCount).toBe(0)
   })
 
   it('shows a load error when the stored expression fails validation', async () => {
@@ -859,7 +886,7 @@ describe('CohortBuilder', () => {
 
     expect(conceptSetSelectionDialog(wrapper).props('modelValue')).toBe(false)
     expect(targetRef.value).toBeUndefined()
-    expect(setup.expression.ConceptSets).toBeUndefined()
+    expect(setup.expression.ConceptSets).toEqual(defaultExpression.ConceptSets)
   })
 
   // ---------------------------------------------------------------------------
@@ -1624,6 +1651,31 @@ describe('CohortBuilder', () => {
     expect(spy).toHaveBeenCalled()
   })
 
+  it('versionsConfig.currentVersion falls back to Unknown user and numeric dates', async () => {
+    const wrapper = createWrapper()
+    await wrapper.vm.$nextTick()
+    const setup = getSetup(wrapper)
+    const { useCohortStore } = await import('@/stores/cohort')
+    const store = useCohortStore()
+
+    store.currentCohort = null
+    const emptyVersion = setup.versionsConfig.currentVersion()
+    expect(emptyVersion.createdBy.name).toBe('Unknown')
+
+    store.createNewCohort()
+    if (store.currentCohort) {
+      const cohort = store.currentCohort as Record<string, unknown>
+      cohort.id = 7
+      cohort.modifiedDate = 1710000000000
+      cohort.modifiedBy = { id: 7, name: 'Tester' }
+    }
+
+    const numericVersion = setup.versionsConfig.currentVersion()
+    expect(numericVersion.assetId).toBe(7)
+    expect(numericVersion.createdDate).toMatch(/T/)
+    expect((numericVersion.createdBy as any).name).toBe('Tester')
+  })
+
   // ---------------------------------------------------------------------------
   // Version preview — the editor must render the historical definition, not the
   // current one, on both the warm (already mounted) and cold (bookmarked URL)
@@ -2253,6 +2305,19 @@ describe('CohortBuilder', () => {
     expect(setup.showJsonDialog).toBe(true)
   })
 
+  it('openSqlDialog opens the SQL dialog and authorship stays null before a cohort is loaded', async () => {
+    const wrapper = createWrapper()
+    await wrapper.vm.$nextTick()
+
+    expect((wrapper.vm as any).authorship).toBeNull()
+
+    ;(wrapper.vm as any).openSqlDialog()
+    await wrapper.vm.$nextTick()
+
+    const sqlDialog = wrapper.findComponent({ name: 'CohortSqlDialog' })
+    expect(sqlDialog.props('modelValue')).toBe(true)
+  })
+
   // ---------------------------------------------------------------------------
   // hasUnsavedChanges — dirty tracking after a cohort has been loaded
   // ---------------------------------------------------------------------------
@@ -2264,6 +2329,31 @@ describe('CohortBuilder', () => {
     await wrapper.vm.$nextTick()
     return wrapper
   }
+
+  // #300: a disabled Save said nothing about why, so the user could not tell
+  // whether to ask for access or fix something themselves.
+  it('explains a disabled Save when the cohort has no name yet', async () => {
+    const wrapper = createWrapper()
+    await wrapper.vm.$nextTick()
+    const setup = getSetup(wrapper)
+    setup.cohortName = ''
+    await wrapper.vm.$nextTick()
+
+    const vm = wrapper.vm as unknown as { canSave: boolean; saveDisabledReason: string }
+    expect(vm.canSave).toBe(false)
+    expect(vm.saveDisabledReason).toMatch(/name/i)
+  })
+
+  it('offers no explanation once Save is available', async () => {
+    const wrapper = createWrapper()
+    await wrapper.vm.$nextTick()
+    const setup = getSetup(wrapper)
+    setup.cohortName = 'A named cohort'
+    await wrapper.vm.$nextTick()
+
+    const vm = wrapper.vm as unknown as { saveDisabledReason: string }
+    expect(vm.saveDisabledReason).toBe('')
+  })
 
   it('hasUnsavedChanges is false immediately after a cohort loads', async () => {
     const wrapper = await mountLoaded()
@@ -2515,6 +2605,7 @@ describe('CohortBuilder — deleting a concept set that is still in use', () => 
     await wrapper.vm.$nextTick()
 
     expect(setup.showDeleteConceptSetDialog).toBe(true)
+    expect(setup.deleteConceptSetWarning).toContain('2 criteria still use it')
     // Nothing removed yet, and nothing un-constrained.
     expect(setup.expression.ConceptSets).toHaveLength(1)
     expect(setup.expression.PrimaryCriteria.CriteriaList[0].ConditionOccurrence.CodesetId).toBe(3)

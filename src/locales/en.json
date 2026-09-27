@@ -90,6 +90,12 @@
     }
   },
   "common": {
+    "authorship": {
+      "created": "Created",
+      "createdBy": "Created by",
+      "updated": "Updated",
+      "updatedBy": "Updated by"
+    },
     "accessDenied": "Access denied",
     "add": "Add",
     "and": "and",
@@ -157,6 +163,7 @@
     "death": "Death",
     "causeOfDeath": "Cause of Death",
     "demographics": "Demographics",
+    "allDomains": "All Domains",
     "failedToLoad": "Failed to load",
     "noIssuesDetected": "No issues detected",
     "dataQuality": "Data Quality",
@@ -331,6 +338,9 @@
     "incidenceRates": {
       "title": "Incidence Rates"
     },
+    "apiKeys": {
+      "title": "API Keys"
+    },
     "dataSources": {
       "title": "Data Sources"
     },
@@ -461,6 +471,7 @@
       "perRuleSatisfaction": "Per-rule satisfaction",
       "populationBreakdown": "Population breakdown",
       "noReportData": "No inclusion-rule report data is available for this cohort and source. The cohort may have no inclusion rules, or it may not have been generated yet. If you've generated it already, try re-running.",
+      "noStatsRecorded": "This generation recorded no inclusion statistics for this mode, so there is no attrition to report. The cohort itself may still contain records; see the generation panel for its record count.",
       "loadError": "Failed to load the inclusion-rule report",
       "attrition": "Attrition",
       "noAttritionData": "No attrition data available",
@@ -568,6 +579,20 @@
     "atlasCohortEditor": {
       "enterCohortPlaceholder": "Enter a cohort definition description here",
       "importConceptSet": "Import Concept Set From Repository..."
+    },
+    "customEra": {
+      "criteriaPrefix": "a custom era using",
+      "criteriaSuffix": "gap of:",
+      "criteriaList": "Criteria List",
+      "addCriteria": "Add Criteria...",
+      "additionalAttributes": "Additional Attributes",
+      "addAttribute": "Add Attribute...",
+      "noCriteria": "No criteria yet.",
+      "noOptionalAttributes": "No additional attributes yet."
+    },
+    "episode": {
+      "criteriaText_1": "an episode of",
+      "addAttribute": "Add attribute..."
     },
     "expressionCartoonBindings": {
       "primaryCriteria": "Primary Criteria",
@@ -1273,6 +1298,7 @@
       "inclusive": "inclusive"
     },
     "demographicCriteria": {
+      "name": "Demographic Criteria",
       "addAttribute": "Add attribute...",
       "demographicCriteriaText_1": "gender is any of:",
       "demographicCriteriaText_2": "race is any of:",
@@ -1291,6 +1317,10 @@
     "endStrategyViewer": {
       "endDateStrategy": "End Date Strategy",
       "endStrategyViewerText_1": "No end date strategy selected. By default, the cohort end date will be the end of the observation period that contains the index event."
+    },
+    "entityImport": {
+      "failed": "Import failed.",
+      "invalidJson": "{file} is not valid JSON."
     },
     "evidencePairViewer": {
       "evidencePairViewerText_1": "loading evidence pairs",
@@ -1484,7 +1514,8 @@
     },
     "userBar": {
       "signin": "Sign In",
-      "signout": "Sign Out"
+      "signout": "Sign Out",
+      "apiKeys": "API Keys"
     },
     "welcome": {
       "close": "Close",
@@ -1732,6 +1763,7 @@
     },
     "characterizationResults": {
       "covariateDetail": "COVARIATE DETAIL",
+      "searchCovariates": "Filter results by name",
       "concept": "Concept",
       "smdLabel": "Standardised mean difference",
       "noCovariateSelected": "No covariate selected."
@@ -1869,6 +1901,12 @@
       "copiedToClipboard": "Cohort JSON copied to clipboard",
       "copyFailed": "Could not copy to clipboard",
       "emptyCohort": "Empty cohort",
+      "sqlMenuTitle": "SQL",
+      "sqlMenuSubtitle": "View and download the generated SQL",
+      "sqlDialogTitle": "Cohort SQL",
+      "sqlDialogSubtitle": "The query this cohort generates. Template SQL keeps its @parameters so it runs anywhere; pick a dialect to see it rendered for one database.",
+      "sqlDialect": "Dialect",
+      "sqlDialectTemplate": "Template (no dialect)",
       "jsonViewEdit": "View / Edit",
       "jsonViewEditSubtitle": "Overwrite the cohort from JSON",
       "jsonDialogTitle": "Cohort JSON",
@@ -1882,6 +1920,12 @@
       "jsonInvalidExpression": "Not a valid Atlas cohort expression",
       "jsonImportFailed": "Import failed: {error}",
       "jsonReadFailed": "Could not read file",
+      "deleteConceptSetTitle": "Delete concept set?",
+      "deleteConceptSetUsageOne": "1 criterion still uses it",
+      "deleteConceptSetUsageMany": "{count} criteria still use it",
+      "deleteConceptSetWarning": "Deleting \"{name}\" will clear it from those criteria, and a criterion with no concept set matches its entire domain. {usage}."
+    },
+    "featureAnalysisEditor": {
       "deleteConceptSetTitle": "Delete concept set?",
       "deleteConceptSetUsageOne": "1 criterion still uses it",
       "deleteConceptSetUsageMany": "{count} criteria still use it",
@@ -2455,7 +2499,17 @@
         "copy": "Copy",
         "delete": "Delete"
       },
-      "deleteConfirm": "Delete feature analysis '{name}'?"
+      "deleteConfirm": "Delete feature analysis '{name}'?",
+      "create": {
+        "prevalence": "Prevalence Criteria",
+        "distribution": "Distribution Criteria",
+        "custom": "Custom SQL"
+      }
+    },
+    "create": {
+      "prevalence": "Prevalence Criteria",
+      "distribution": "Distribution Criteria",
+      "custom": "Custom SQL"
     },
     "editor": {
       "comingSoon": "Feature Analysis editor coming soon",
@@ -2482,10 +2536,19 @@
         "designLabel": "Covariate settings (JSON)",
         "invalidJson": "Invalid JSON"
       },
+      "prevalence": {
+        "addCriteria": "Add Criteria feature",
+        "empty": "No criteria features yet."
+      },
       "criteriaSet": {
         "explainer": "Criteria builder integration ships in Phase 3. For now, edit JSON directly.",
         "conceptSetsLabel": "Concept sets (JSON array)",
         "criteriaLabel": "Criteria group (JSON)"
+      },
+      "distribution": {
+        "addCriteria": "Add Criteria feature",
+        "empty": "No criteria features yet.",
+        "demographicSubtitle": "Demographic criteria are not windowed"
       },
       "customFe": {
         "sqlLabel": "Custom SQL"
@@ -2500,6 +2563,7 @@
       "leaveConfirm": "You have unsaved changes. Leave anyway?",
       "saveSuccess": "Feature analysis saved",
       "saveError": "Failed to save feature analysis",
+      "aggregatesUnavailable": "Unable to load the default aggregate",
       "nameRequired": "Name is required"
     }
   },
@@ -3192,6 +3256,7 @@
     "conceptSet": {
       "recommend": {
         "notAvailable": "Recommendations are not available. The PHOEBE 2.0 vocabulary tables are required to generate recommendations.",
+        "setupLink": "How to install the PHOEBE 2.0 tables",
         "noSeed": "Add concepts to the set first — recommendations are based on what is already included.",
         "recommendations": "recommendations"
       },
@@ -3323,6 +3388,7 @@
           "noRunsTitle": "No runs yet",
           "runPendingTitle": "Run in progress",
           "runFailedTitle": "Run failed",
+          "resultsErrorTitle": "Run finished, but its results could not be loaded",
           "noDataTitle": "No rows match the current filter",
           "runPendingHint": "Polling for completion…",
           "noRunsHint": "Generate against a data source to see baseline characteristics."
@@ -3372,6 +3438,8 @@
       "analysisType": "Analysis type:",
       "availableVariables": "Available variables:",
       "availableVariablesNote": "all variables specified in Cohort Characterization parameters",
+      "aggregate": "Aggregate",
+      "populateSampleSql": "Populate Sample SQL",
       "caption": "Feature Analysis #<%=id%>",
       "copiedToClipboard": "Copied To Clipboard!",
       "copySqlToClipboard": "Copy Analysis SQL Template To Clipboard",
@@ -3453,7 +3521,7 @@
       "outcomeCohorts": "Outcome Cohorts",
       "removeStudyWindow": "Remove Study Window",
       "selectInclusionCriteriaMessage": "Please select a qualifying inclusion criteria to edit.",
-      "stratifyCriteria": "Stratify Criteria:",
+      "stratifyCriteria": "Stratify Criteria",
       "stratifyCriteriaMessage": "You can provide optional stratification criteria to the analysis that will divide the population into unique groups based on their satisified criteria.",
       "studyCohorts": "Study Cohorts",
       "studyWindowText1": "Study window begins on",
@@ -4587,6 +4655,7 @@
     "importFileReadError": "Failed to read the selected file.",
     "importInvalidJson": "Expression JSON is not valid JSON.",
     "importInvalidShape": "Expression must be a JSON object.",
+    "importInvalidExpression": "Expression JSON is not a valid cohort expression: {errors}",
     "importFailed": "Import failed. Check the JSON and try again.",
     "copyLoadError": "Failed to load the cohort to copy.",
     "copyLoadForbidden": "You do not have permission to read this cohort.",
@@ -4596,7 +4665,20 @@
     "ruleDescription": "Description"
   },
   "const": {
+    "entityName": {
+      "characterization": "characterization",
+      "cohort": "cohort",
+      "conceptSet": "concept set",
+      "featureAnalysis": "feature analysis",
+      "incidenceRate": "incidence rate analysis",
+      "pathway": "pathway analysis"
+    },
     "disabledReason": {
+      "previewingVersion": "You are previewing an earlier version. Return to the current version to save.",
+      "noCreatePermission": "You do not have permission to create a {entity}.",
+      "noWriteAccess": "You do not own this {entity} and have not been granted write access to it.",
+      "needsName": "Give the {entity} a name before saving.",
+      "hasErrors": "Resolve the validation errors before saving.",
       "dirty": "Save changes before generate",
       "accessDenied": "Access denied",
       "invalidTar": "Invalid TAR",
@@ -6487,5 +6569,64 @@
   },
   "inclusionPanel": {
     "limitIncludedEvents": "Limit Included Events to"
+  },
+  "apiKeys": {
+    "list": {
+      "title": "API Keys",
+      "subtitle": "Manage personal API keys for programmatic access to WebAPI.",
+      "newButton": "New Key",
+      "empty": "You haven't created any API keys yet.",
+      "columns": {
+        "name": "Name",
+        "description": "Description",
+        "identifier": "Key Identifier",
+        "created": "Created",
+        "expires": "Expires",
+        "lastUsed": "Last Used",
+        "status": "Status",
+        "actions": "Actions"
+      },
+      "status": {
+        "active": "Active",
+        "disabled": "Disabled",
+        "expired": "Expired"
+      },
+      "never": "Never",
+      "neverUsed": "Never used",
+      "revoke": "Revoke",
+      "revokeConfirmTitle": "Revoke API Key",
+      "revokeConfirm": "Revoke the key '{name}'? It will stop working immediately, but stays listed here.",
+      "delete": "Delete",
+      "deleteConfirmTitle": "Delete API Key",
+      "deleteConfirm": "Permanently delete the key '{name}'? This cannot be undone.",
+      "revoked": "API key revoked",
+      "deleted": "API key deleted",
+      "revokeError": "Failed to revoke API key",
+      "deleteError": "Failed to delete API key"
+    },
+    "create": {
+      "eyebrow": "NEW KEY",
+      "title": "New API Key",
+      "subtitle": "Generate a personal API key for programmatic access.",
+      "name": "Name",
+      "namePlaceholder": "e.g. My laptop",
+      "description": "Description",
+      "expiration": "Expiration",
+      "expirationNever": "Never expires",
+      "expirationDays": "{days} days",
+      "expirationCustom": "Custom\u2026",
+      "customDays": "Number of days",
+      "customDaysPlaceholder": "Blank = never expires",
+      "generate": "Generate",
+      "cancel": "Cancel",
+      "nameRequired": "Name is required",
+      "resultTitle": "API Key Created",
+      "resultWarning": "Copy this key now \u2014 you won't be able to see it again.",
+      "rawKeyLabel": "API Key",
+      "copy": "Copy",
+      "copied": "Copied to clipboard",
+      "copyFailed": "Could not copy to clipboard",
+      "done": "Done"
+    }
   }
 }

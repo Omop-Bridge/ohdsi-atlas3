@@ -117,17 +117,20 @@ export function useEntityAccessFor(kind: EntityAccessKind) {
 /**
  * Source-specific access. Sources have a different shape (no ownership; flat
  * access type list) and a different permission resource.
+ *
+ * The access map is keyed by WebAPI source id, so callers should pass a
+ * source id whenever they have one available. String keys still work for
+ * backwards compatibility, but they are not the primary lookup path.
  */
-export function useSourceAccess(sourceKey: MaybeRefOrGetter<string | null | undefined>): {
+export function useSourceAccess(sourceId: MaybeRefOrGetter<number>): {
   canRead: ComputedRef<boolean>
   canWrite: ComputedRef<boolean>
 } {
   const authStore = useAuthStore()
 
   const grant = computed<string[] | undefined>(() => {
-    const key = toValue(sourceKey)
-    if (!key) return undefined
-    return authStore.entityAccess.source[key]
+    const id = toValue(sourceId)
+    return authStore.entityAccess.source[String(id)]
   })
 
   const canRead = computed(() => {
@@ -164,7 +167,33 @@ export function useSourceAccessFor() {
   const has = (perm: string) =>
     permissionChecker.hasPermission(perm, authStore.permissions).granted
 
-  function canRead(sourceKey: string | null | undefined): boolean {
+  /**
+   * Whether the user can read *some* source, without naming one.
+   *
+   * For deciding whether a source-listing screen is worth showing at all, when
+   * the caller has no id yet because the list is what it is about to load.
+   */
+  function canReadAny(): boolean {
+    if (!getAuthConfig().userAuthenticationEnabled) return true
+    if (has('read:source') || has('write:source') || has('admin:source') || has('source:*:access')) {
+      return true
+    }
+    return Object.values(authStore.entityAccess.source).some(
+      (grant) => Array.isArray(grant) && (grant.includes('READ') || grant.includes('WRITE'))
+    )
+  }
+
+  /**
+   * Whether the user may administer sources as a whole, rather than one source:
+   * registering a new one, or clearing the server-side cache. Neither action
+   * has a source id to check, so neither can go through `canWrite`.
+   */
+  function canManageAll(): boolean {
+    if (!getAuthConfig().userAuthenticationEnabled) return true
+    return has('write:source') || has('admin:source')
+  }
+
+  function canRead(sourceId: number): boolean {
     if (!getAuthConfig().userAuthenticationEnabled) return true
     if (
       has('read:source') ||
@@ -174,18 +203,16 @@ export function useSourceAccessFor() {
     ) {
       return true
     }
-    if (!sourceKey) return false
-    const g = authStore.entityAccess.source[sourceKey]
+    const g = authStore.entityAccess.source[String(sourceId)]
     return Array.isArray(g) && (g.includes('READ') || g.includes('WRITE'))
   }
 
-  function canWrite(sourceKey: string | null | undefined): boolean {
+  function canWrite(sourceId: number): boolean {
     if (!getAuthConfig().userAuthenticationEnabled) return true
     if (has('write:source') || has('admin:source')) return true
-    if (!sourceKey) return false
-    const g = authStore.entityAccess.source[sourceKey]
+    const g = authStore.entityAccess.source[String(sourceId)]
     return Array.isArray(g) && g.includes('WRITE')
   }
 
-  return { canRead, canWrite }
+  return { canRead, canWrite, canReadAny, canManageAll }
 }

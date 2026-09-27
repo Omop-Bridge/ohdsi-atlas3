@@ -3,6 +3,7 @@
     :eyebrow="t('navigation.incidenceRates', 'Incidence rate analysis').value"
     :title="title"
     :subtitle="subtitle"
+    :authorship="store.currentIR"
     :show-back="false"
     testid="ir-builder"
     @back="handleBack"
@@ -206,30 +207,65 @@
           >
             {{ t('common.delete', 'Delete') }}
           </AtlasButton>
-          <AtlasButton
-            variant="primary"
-            :disabled="!store.canSave || saving || !canSave"
-            :loading="saving"
-            data-testid="ir-builder-save"
-            @click="onSave"
-          >
-            {{ t('common.save', 'Save') }}
-          </AtlasButton>
+          <DisabledReasonTooltip :reason="saveDisabledReason">
+            <AtlasButton
+              variant="primary"
+              :disabled="!store.canSave || saving || !canSave"
+              :loading="saving"
+              data-testid="ir-builder-save"
+              @click="onSave"
+            >
+              {{ t('common.save', 'Save') }}
+            </AtlasButton>
+          </DisabledReasonTooltip>
         </template>
       </AtlasActionToolbar>
     </template>
 
     <IncidenceRateWorkbench v-if="store.currentIR" />
 
-    <AtlasDialog
+    <ConceptSetsListDialog
       v-model="showConceptSetsDialog"
-      :eyebrow="t('navigation.incidenceRates', 'Incidence rate').value"
-      :title="t('ir.tabs.conceptSets', 'Concept Sets').value"
-      :close-label="t('common.close', 'Close').value"
-      max-width="1200"
-      @close="showConceptSetsDialog = false"
+      :concept-sets="incidenceRateConceptSets"
+      :used-concept-sets="usedConceptSets"
+      @delete="handleDeleteConceptSet"
+      @view="handleViewConceptSet"
     >
-      <IncidenceRateConceptSetsPanel data-testid="ir-builder-conceptsets-panel" />
+      <template #actions>
+        <AtlasButton
+          variant="secondary"
+          icon="mdi-plus"
+          data-testid="ir-builder-conceptset-create"
+          @click="createConceptSet()"
+        >
+          {{ t('components.conceptSetBuilder.newConceptSet', 'New concept set').value }}
+        </AtlasButton>
+      </template>
+    </ConceptSetsListDialog>
+
+    <AtlasDialog
+      v-model="showDeleteConceptSetDialog"
+      eyebrow="CONCEPT SET"
+      :title="t('components.featureAnalysisEditor.deleteConceptSetTitle', 'Delete concept set?').value"
+      max-width="480"
+      @close="cancelDeleteConceptSet"
+    >
+      {{ deleteConceptSetWarning }}
+      <template #actions>
+        <AtlasButton
+          variant="ghost"
+          @click="cancelDeleteConceptSet"
+        >
+          {{ t('common.cancel', 'Cancel').value }}
+        </AtlasButton>
+        <AtlasButton
+          variant="danger"
+          data-testid="ir-builder-delete-concept-set-confirm"
+          @click="confirmDeleteConceptSet"
+        >
+          {{ t('common.delete', 'Delete').value }}
+        </AtlasButton>
+      </template>
     </AtlasDialog>
 
     <AtlasDialog
@@ -262,6 +298,21 @@
       :title="t('components.access.configureAccess', 'Configure access').value"
       :subtitle="store.currentIR.name || undefined"
       @close="showAccessDialog = false"
+    />
+
+    <ConceptSetEditor
+      v-if="conceptSetsStore.editorOpen"
+      :model-value="conceptSetsStore.editorOpen"
+      :concept-set="conceptSetsStore.currentSet"
+      embedded
+      @update:model-value="
+        value => {
+          if (!value) {
+            conceptSetsStore.closeEditor()
+          }
+        }
+      "
+      @apply="handleConceptSetApplied"
     />
 
     <AtlasDialog
@@ -308,6 +359,7 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { useIncidenceRateStore } from '@/stores/incidence-rate'
+import { useConceptSetsStore } from '@/stores/concept-sets'
 import { useIncidenceRateBuilder } from '@/composables/useIncidenceRateBuilder'
 import { usePermissions } from '@/composables/usePermissions'
 import { useEntityAccess } from '@/composables/useEntityAccess'
@@ -317,15 +369,23 @@ import { EntityAccessDialog, EntityAccessLockButton } from '@/components/access'
 import { AtlasButton, AtlasBadge, AtlasDialog, AtlasIcon, AtlasIconButton, AtlasSnackbar, AtlasTooltip } from '@/components/ui'
 import type { AtlasSnackbarSeverity } from '@/components/ui'
 import IncidenceRateWorkbench from '@/components/incidence-rate/IncidenceRateWorkbench.vue'
-import IncidenceRateConceptSetsPanel from '@/components/incidence-rate/IncidenceRateConceptSetsPanel.vue'
 import IncidenceRateVersionsPanel from '@/components/incidence-rate/IncidenceRateVersionsPanel.vue'
+import ConceptSetsListDialog from '@/components/cohort/ConceptSetsListDialog.vue'
+import ConceptSetEditor from '@/components/concepts/ConceptSetEditor.vue'
 import TagSelectionDialog from '@/components/tags/TagSelectionDialog.vue'
+import DisabledReasonTooltip from '@/components/shared/DisabledReasonTooltip.vue'
+import { resolveSaveDisabledReason } from '@/utils/save-disabled-reason'
 import { exportIncidenceRate, importIncidenceRate } from '@/services/incidence-rate.service'
 import { logger } from '@/utils/logger'
+import type { ConceptSetReference } from '@/models/cohort.types'
+import type { ConceptSet as CirceConceptSet, ConceptSetItem as CirceConceptSetItem, CriteriaGroup as CirceCriteriaGroup } from '@/models/circe-types'
+import { circeConceptSetFromAtlas, convertCirceItemToAtlas } from '@/components/cohort-editor/atlas-concept-set'
+import { countCriteriaGroupConceptSetReferences, findUsedCriteriaGroupConceptSetIds, unassignCriteriaGroupConceptSetId } from '@/components/cohort-editor/criteria-concept-set-usage'
 import type { Tag } from '@/models/webapi.types'
 
-const { t } = useI18n()
+const { t, tv } = useI18n()
 const store = useIncidenceRateStore()
+const conceptSetsStore = useConceptSetsStore()
 const router = useRouter()
 const { save, copy, remove, feedback } = useIncidenceRateBuilder()
 const feedbackSeverity = computed<AtlasSnackbarSeverity>(() =>
@@ -344,9 +404,135 @@ const importFileInput = ref<HTMLInputElement | null>(null)
 const canEdit = computed(() => !store.isPreviewMode && !store.isReadOnly)
 
 const irTags = computed<Tag[]>(() => store.currentIR?.tags ?? [])
+const incidenceRateConceptSets = computed<ConceptSetReference[]>(() => {
+  const sets = store.currentIR?.expression.ConceptSets ?? []
+  return (sets as Array<{ id?: number | string; name?: string; expression?: { items?: CirceConceptSetItem[] } }>).map((set, index) => ({
+    id: set.id ?? index,
+    name: set.name ?? '',
+    items: ((set.expression?.items ?? []) as CirceConceptSetItem[]).map(convertCirceItemToAtlas),
+  }))
+})
+const usedConceptSets = computed<ConceptSetReference[]>(() => {
+  const usedIds = findUsedCriteriaGroupConceptSetIds(
+    (store.currentIR?.expression.strata ?? []).map(stratum => stratum.expression as CirceCriteriaGroup | undefined)
+  )
+  return incidenceRateConceptSets.value.filter(conceptSet => typeof conceptSet.id === 'number' && usedIds.has(conceptSet.id))
+})
+
+const conceptSetPendingDelete = ref<ConceptSetReference | null>(null)
+const conceptSetPendingDeleteUsage = ref(0)
+const showDeleteConceptSetDialog = ref(false)
 
 async function handleTagsUpdate(newTags: Tag[]) {
   await store.syncTags(newTags)
+}
+
+function createConceptSet() {
+  showConceptSetsDialog.value = false
+  conceptSetsStore.openCreateEditor()
+}
+
+function handleViewConceptSet(set: ConceptSetReference) {
+  showConceptSetsDialog.value = false
+  conceptSetsStore.openEmbeddedEditor({
+    id: set.id,
+    name: set.name,
+    items: (set.items ?? []) as never[],
+  })
+}
+
+function handleConceptSetApplied(set: { id?: number | string; name: string; items?: unknown[] }) {
+  const currentSets = (store.currentIR?.expression.ConceptSets ?? []) as CirceConceptSet[]
+  const updatedSet = circeConceptSetFromAtlas(
+    {
+      id: set.id,
+      name: set.name,
+      items: set.items as CirceConceptSetItem[],
+    },
+    currentSets,
+  )
+
+  if (!updatedSet) {
+    return
+  }
+
+  const next = [...currentSets]
+  const existingIndex = next.findIndex(existing => existing.id === updatedSet.id)
+  if (existingIndex !== -1) next[existingIndex] = updatedSet
+  else next.push(updatedSet)
+
+  if (store.currentIR) {
+    store.currentIR.expression.ConceptSets = next
+  }
+
+  conceptSetsStore.closeEditor()
+  showConceptSetsDialog.value = true
+}
+
+function handleDeleteConceptSet(conceptSet: ConceptSetReference) {
+  if (typeof conceptSet.id !== 'number') return
+
+  const usage = countCriteriaGroupConceptSetReferences(
+    (store.currentIR?.expression.strata ?? []).map(stratum => stratum.expression as CirceCriteriaGroup | undefined),
+    conceptSet.id,
+  )
+
+  if (usage === 0) {
+    deleteConceptSet(conceptSet)
+    return
+  }
+
+  conceptSetPendingDelete.value = conceptSet
+  conceptSetPendingDeleteUsage.value = usage
+  showDeleteConceptSetDialog.value = true
+}
+
+function confirmDeleteConceptSet() {
+  const conceptSet = conceptSetPendingDelete.value
+  showDeleteConceptSetDialog.value = false
+  conceptSetPendingDelete.value = null
+  if (conceptSet) deleteConceptSet(conceptSet)
+}
+
+function cancelDeleteConceptSet() {
+  showDeleteConceptSetDialog.value = false
+  conceptSetPendingDelete.value = null
+}
+
+const deleteConceptSetWarning = computed(() => {
+  const name = conceptSetPendingDelete.value?.name ?? ''
+  const count = conceptSetPendingDeleteUsage.value
+  const usage =
+    count === 1
+      ? t('components.featureAnalysisEditor.deleteConceptSetUsageOne', '1 criterion still uses it').value
+      : t('components.featureAnalysisEditor.deleteConceptSetUsageMany', '{count} criteria still use it', { count }).value
+
+  return t(
+    'components.featureAnalysisEditor.deleteConceptSetWarning',
+    'Deleting "{name}" will clear it from those criteria. {usage}.',
+    { name, usage },
+  ).value
+})
+
+function deleteConceptSet(conceptSet: ConceptSetReference) {
+  if (typeof conceptSet.id !== 'number') return
+
+  const currentSets = (store.currentIR?.expression.ConceptSets ?? []) as Array<{
+    id?: number | null
+    name?: string | null
+    expression?: { items?: CirceConceptSetItem[] }
+  }>
+  const next = [...currentSets]
+  const idx = next.findIndex(cs => cs.id === conceptSet.id)
+  if (idx !== -1) next.splice(idx, 1)
+
+  if (store.currentIR) {
+    store.currentIR.expression.ConceptSets = next
+    unassignCriteriaGroupConceptSetId(
+      (store.currentIR.expression.strata ?? []).map(stratum => stratum.expression as CirceCriteriaGroup | undefined),
+      conceptSet.id,
+    )
+  }
 }
 
 function slugifyName(name: string): string {
@@ -449,6 +635,19 @@ const { canWrite, canDelete } = useEntityAccess('incidenceRate', irId)
 const canCopy = computed<boolean>(() => hasPermission('create:incidence'))
 const canSave = computed<boolean>(() =>
   irId.value === null ? hasPermission('create:incidence') : canWrite.value
+)
+
+const saveDisabledReason = computed<string>(() =>
+  resolveSaveDisabledReason({
+    entity: tv('const.entityName.incidenceRate', 'incidence rate analysis'),
+    isNew: irId.value === null,
+    hasName: true,
+    hasPermission: canSave.value,
+    isPreviewing: store.isPreviewMode,
+    hasValidationErrors: store.hasErrors,
+    isSaving: saving.value,
+    translate: tv,
+  })
 )
 
 const title = computed(() => {

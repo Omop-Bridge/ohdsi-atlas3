@@ -67,6 +67,8 @@
           :selected-analysis-ids="filters.selectedAnalysisIds"
           :selected-domains="filters.selectedDomains"
           :selected-cohort-id="filters.selectedCohortId"
+          :search="filters.search"
+          @update:search="(v) => (filters.search = v)"
           @update:selected-analysis-ids="(v) => (filters.selectedAnalysisIds = v)"
           @update:selected-domains="(v) => (filters.selectedDomains = v)"
           @update:selected-cohort-id="(v) => (filters.selectedCohortId = v)"
@@ -75,7 +77,7 @@
         <CharacterizationEmptyState
           v-if="emptyVariant"
           :variant="emptyVariant"
-          :error-message="execution?.status === 'FAILED' ? errorMessage : undefined"
+          :error-message="emptyVariant === 'run-failed' || emptyVariant === 'results-error' ? errorMessage : undefined"
         />
 
         <template v-else>
@@ -103,6 +105,7 @@
             :threshold="filters.threshold"
             :selected-analysis-ids="filters.selectedAnalysisIds"
             :selected-domains="filters.selectedDomains"
+            :search="filters.search"
             :selected-cohort-id="filters.selectedCohortId"
             @explore="onExplore"
           />
@@ -287,10 +290,12 @@ const emptyVariant = computed(() => resolveEmptyVariant({
   executionCount: store.executions.length,
   selectedExecutionId: selectedExecutionId.value,
   executionStatus: execution.value?.status,
+  resultsError: errorMessage.value || null,
 }))
 
 const runTableSources = computed<RunTableSource[]>(() =>
   sourcesStore.sources.map((s) => ({
+    sourceId: s.sourceId,
     sourceKey: s.sourceKey,
     sourceName: s.sourceName ?? s.sourceKey,
   }))

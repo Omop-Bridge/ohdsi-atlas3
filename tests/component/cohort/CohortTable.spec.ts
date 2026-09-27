@@ -27,6 +27,8 @@ function makeWrapper(props: Partial<{
   selectedTags: string[]
   canCopy: boolean
   copyingId: number | null
+  sortKey: 'id' | 'name' | 'createdBy' | 'createdDate' | 'modifiedDate'
+  sortOrder: 'asc' | 'desc'
 }> = {}) {
   // Per-test pinia + a permitted user so the row action buttons aren't
   // disabled by the new permission gating.
@@ -192,6 +194,39 @@ describe('CohortTable', () => {
       ])
     })
 
+    it('orders a never-modified cohort by its creation date (#292)', async () => {
+      // WebAPI leaves modifiedDate unset until an asset is edited. Reading that
+      // as "no date" sent a cohort created today below one edited months ago.
+      const withUnmodified: CohortDefinitionSummary[] = [
+        {
+          id: 1,
+          name: 'Aspirin',
+          createdBy: { name: 'alice' },
+          createdDate: '2026-01-01T00:00:00Z',
+          modifiedDate: '2026-04-01T00:00:00Z',
+        },
+        {
+          id: 2,
+          name: 'Brand new',
+          createdBy: { name: 'bob' },
+          createdDate: '2026-06-01T00:00:00Z',
+          modifiedDate: null,
+        },
+      ] as never
+
+      expect(names(makeWrapper({ cohorts: withUnmodified }))).toEqual(['Brand new', 'Aspirin'])
+    })
+
+    it('shows the creation date in the Updated column when never modified (#292)', () => {
+      const wrapper = makeWrapper({
+        cohorts: [
+          { id: 2, name: 'Brand new', createdBy: { name: 'bob' }, createdDate: '2026-06-01T00:00:00Z', modifiedDate: null },
+        ] as never,
+      })
+      const cells = wrapper.find('[data-testid=cohort-table-row]').findAll('td')
+      expect(cells[cells.length - 2]!.text()).toBe('Jun 1, 2026')
+    })
+
     it('sorts by id, and reverses on a second click', async () => {
       const wrapper = makeWrapper({ cohorts: rows })
 
@@ -207,6 +242,16 @@ describe('CohortTable', () => {
 
       await wrapper.find('[data-testid=cohort-table-sort-name]').trigger('click')
       expect(names(wrapper)).toEqual(['Aspirin', 'metformin', 'Zoledronic acid'])
+    })
+
+    it('respects externally controlled sort state', () => {
+      const wrapper = makeWrapper({
+        cohorts: rows,
+        sortKey: 'id',
+        sortOrder: 'asc',
+      })
+
+      expect(names(wrapper)).toEqual(['Zoledronic acid', 'Aspirin', 'metformin'])
     })
 
     it('sorts by author and by created date', async () => {

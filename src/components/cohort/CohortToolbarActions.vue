@@ -46,6 +46,13 @@
           :subtitle="t('components.cohortBuilder.jsonViewEditSubtitle', 'Overwrite the cohort from JSON').value"
           @click="$emit('view-json')"
         />
+        <AtlasListItem
+          data-testid="view-sql"
+          prepend-icon="mdi-database-search"
+          :title="t('components.cohortBuilder.sqlMenuTitle', 'SQL').value"
+          :subtitle="t('components.cohortBuilder.sqlMenuSubtitle', 'View and download the generated SQL').value"
+          @click="$emit('view-sql')"
+        />
       </AtlasList>
     </AtlasMenu>
 
@@ -56,13 +63,15 @@
         :title="t('common.unsavedChanges', 'Unsaved changes').value"
         data-testid="save-cohort-dirty-dot"
       />
-      <AtlasButton
-        :disabled="!canSave || isPreviewingVersion"
-        data-testid="save-cohort-btn"
-        @click="$emit('save')"
-      >
-        {{ t('common.save') }}
-      </AtlasButton>
+      <DisabledReasonTooltip :reason="saveDisabledReason">
+        <AtlasButton
+          :disabled="!canSave || isPreviewingVersion"
+          data-testid="save-cohort-btn"
+          @click="$emit('save')"
+        >
+          {{ t('common.save') }}
+        </AtlasButton>
+      </DisabledReasonTooltip>
     </span>
   </div>
 </template>
@@ -70,20 +79,27 @@
 <script setup lang="ts">
 import { AtlasButton, AtlasIcon, AtlasIconButton, AtlasList, AtlasListItem, AtlasMenu } from '@/components/ui'
 import { useI18n } from '@/composables/useI18n'
+import DisabledReasonTooltip from '@/components/shared/DisabledReasonTooltip.vue'
 
 interface Props {
   canSave: boolean
   isDirty?: boolean
   isPreviewingVersion?: boolean
+  /**
+   * Why Save is disabled, resolved by the builder. This component only sees a
+   * single canSave boolean, which cannot say more than "you cannot save".
+   */
+  saveDisabledReason?: string
 }
 
-defineProps<Props>()
+withDefaults(defineProps<Props>(), { saveDisabledReason: '' })
 
 defineEmits<{
   (e: 'cancel'): void
   (e: 'save'): void
   (e: 'export-download'): void
   (e: 'export-copy'): void
+  (e: 'view-sql'): void
   (e: 'view-json'): void
 }>()
 

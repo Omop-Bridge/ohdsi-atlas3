@@ -71,6 +71,7 @@
         <template #actions>
           <cohort-toolbar-actions
             :can-save="canSave"
+            :save-disabled-reason="saveDisabledReason"
             :is-dirty="hasUnsavedChanges"
             :is-previewing-version="isPreviewingVersion"
             @cancel="handleCancel"
@@ -78,6 +79,7 @@
             @export-download="handleExportDownload"
             @export-copy="handleExportCopy"
             @view-json="openJsonDialog"
+            @view-sql="openSqlDialog"
           />
         </template>
       </AtlasActionToolbar>
@@ -114,6 +116,12 @@
       @apply="handleApplyJson"
     />
 
+    <cohort-sql-dialog
+      v-model="showSqlDialog"
+      :expression="sqlDialogExpression"
+      :filename="sqlExportFilename()"
+    />
+
     <AtlasAlert
       v-if="loadError"
       class="cohort-builder__load-error"
@@ -140,7 +148,7 @@
         :expression="expression"
         :concept-sets="conceptSetOptions"
         @select-concept-set="onSelectConceptSet"
-        @edit-concept-set="onSelectConceptSet"
+        @edit-concept-set="handleEditConceptSetFromTarget"
         @clear-concept-set="handleClearConceptSet"
       />
     </div>
@@ -309,14 +317,16 @@ import { getCohortDefinition } from '@/services/cohort-definition.service'
 import { getConceptSetById } from '@/services/concept-set.service'
 import type { CohortDefinition, ConceptSetReference } from '@/models/cohort.types'
 import type { Concept as SearchConcept, ConceptSetItem } from '@/models/concept-set.types'
+import type { ConceptSetSelectionTarget } from '@/components/circe/criteria/criteria-editor.types'
 import ConceptSetSelectionDialog from './ConceptSetSelectionDialog.vue'
 import ConceptSearchDialog from './ConceptSearchDialog.vue'
 import ConceptSetEditor from '../concepts/ConceptSetEditor.vue'
 import CohortExpressionEditor from '@/components/cohort-editor/CohortExpressionEditor.vue'
-import { CohortExpressionSchema, defaultExpression as blankExpression } from '@/models/circe-types'
+import { defaultExpression as blankExpression } from '@/models/circe-types'
 import type { CohortExpression, Concept as CirceConcept, ConceptSetItem as CirceConceptSetItem } from '@/models/circe-types'
 import { unassignConceptSetId, walkConceptSetReferences } from '@/components/cohort-editor/concept-set-usage'
 import { normalizeForCirce } from '@/components/cohort-editor/normalize'
+import { describeImportProblems, validateCohortExpression } from '@/components/cohort-editor/import-validation'
 import { convertAtlasItemToCirce } from '@/components/cohort-editor/atlas-concept-set'
 import CohortGenerationSection from './CohortGenerationSection.vue'
 import VersionsTabContent from '@/components/versions/VersionsTabContent.vue'
@@ -328,8 +338,10 @@ import CohortToolbarActions from './CohortToolbarActions.vue'
 import CohortToolbarStatus from './CohortToolbarStatus.vue'
 import AtlasActionToolbar from '@/components/ui/AtlasActionToolbar.vue'
 import { nextConceptSetId } from '@/utils/concept-set-id'
+import { resolveSaveDisabledReason } from '@/utils/save-disabled-reason'
 import ConceptSetsListDialog from './ConceptSetsListDialog.vue'
 import CohortJsonDialog from './CohortJsonDialog.vue'
+import CohortSqlDialog from './CohortSqlDialog.vue'
 import ValidationMessagesDialog from './ValidationMessagesDialog.vue'
 import TagSelectionDialog from '@/components/tags/TagSelectionDialog.vue'
 import { EntityAccessDialog } from '@/components/access'
@@ -445,7 +457,7 @@ const expressionConceptSets = computed<ConceptSetReference[]>(() =>
 )
 
 const {
-    dialogOpen: isConceptSetDialogOpen,
+  pickerOpen: isConceptSetDialogOpen,
     conceptSetOptions,
     onSelectConceptSet,
     onLocalConceptSetSelected,
@@ -473,6 +485,8 @@ const showVersionsDialog = ref(false)
 const showTagsDialog = ref(false)
 const showAccessDialog = ref(false)
 const showJsonDialog = ref(false)
+const showSqlDialog = ref(false)
+const sqlDialogExpression = ref<CohortExpression | null>(null)
 // Snapshot of the expression taken when the JSON dialog opens, so the
 // editor is not re-seeded under the user while they type.
 const jsonDialogSource = ref('')
@@ -598,6 +612,17 @@ const canSavePermission = computed(() =>
 const canSave = computed(() => {
   return cohortName.value.trim().length > 0 && canSavePermission.value
 })
+
+const saveDisabledReason = computed<string>(() =>
+  resolveSaveDisabledReason({
+    entity: tv('const.entityName.cohort', 'cohort'),
+    isNew: cohortId.value === null,
+    hasName: cohortName.value.trim().length > 0,
+    hasPermission: canSavePermission.value,
+    isPreviewing: isPreviewingVersion.value,
+    translate: tv,
+  })
+)
 
 // Preview mode state. A preview installed for another cohort survives until
 // this editor loads its own definition, and the first render happens before
@@ -975,6 +1000,10 @@ async function loadCohort(id: string) {
       description: atlasCohort.description || '',
       tags: atlasCohort.tags || [],
       expression: atlasCohort.expression,
+      createdBy: atlasCohort.createdBy,
+      createdDate: atlasCohort.createdDate,
+      modifiedBy: atlasCohort.modifiedBy,
+      modifiedDate: atlasCohort.modifiedDate,
     }
     cohortStore.setCohort(cohortDef)
     cohortStore.markClean()
@@ -1080,6 +1109,22 @@ function handleViewConceptSet(conceptSet: {
   items?: unknown[]
 }) {
   showConceptSetsDialog.value = false
+  handleEditConceptSet(conceptSet)
+}
+
+function handleEditConceptSetFromTarget(target: ConceptSetSelectionTarget | undefined) {
+  const conceptSetId = target?.targetRef.value
+  if (conceptSetId === undefined || conceptSetId === null) {
+    onSelectConceptSet(target)
+    return
+  }
+
+  const conceptSet = expressionConceptSets.value.find(cs => cs.id === conceptSetId)
+  if (!conceptSet) {
+    onSelectConceptSet(target)
+    return
+  }
+
   handleEditConceptSet(conceptSet)
 }
 
@@ -1368,17 +1413,20 @@ async function handleApplyJson(json: string) {
     return
   }
 
-  const result = CohortExpressionSchema.safeParse(parsed)
-  if (!result.success) {
+  // Reports the fields the schema does not recognise as well as the ones it
+  // rejects, so a renamed key (`title` for `name`) is refused outright rather
+  // than dropped on the way in (#328).
+  const result = validateCohortExpression(parsed)
+  if (!result.ok) {
     errorMessage.value = tv('components.cohortBuilder.jsonImportFailed', 'Import failed: {error}', {
-      error: result.error.issues[0]?.message ?? 'Invalid expression',
+      error: describeImportProblems(result.problems).join('; '),
     })
     showError.value = true
     return
   }
 
   cancelValidation()
-  replaceExpression(result.data)
+  replaceExpression(result.expression)
 
   showJsonDialog.value = false
   successMessage.value = tv(
@@ -1406,6 +1454,23 @@ function exportableExpression(): string {
 function openJsonDialog() {
   jsonDialogSource.value = exportableExpression()
   showJsonDialog.value = true
+}
+
+function sqlExportFilename(): string {
+  return exportFilename().replace(/\.json$/, '.sql')
+}
+
+/**
+ * Open the SQL dialog for the current expression.
+ *
+ * Normalised the same way save and JSON export are: circe-be rejects the
+ * sparse in-editor form, so handing it the raw document would fail the SQL
+ * build on cohorts that look perfectly fine in the builder. The cohort need
+ * not be saved — the expression travels in the request body.
+ */
+function openSqlDialog() {
+  sqlDialogExpression.value = normalizeForCirce(toRaw(expression.value))
+  showSqlDialog.value = true
 }
 
 function handleExportDownload() {
@@ -1492,7 +1557,21 @@ function _getStatusText(status: string): string {
 // toolbar in the hero header (with hide-internal-toolbar). The
 // proxy returned by defineExpose auto-unwraps refs at access
 // time, so a parent reading `builderRef.canSave` gets a number.
+// Read by the host view, which owns the hero header this belongs under.
+const authorship = computed(() => {
+  const cohort = cohortStore.currentCohort
+  if (!cohort?.id) return null
+  return {
+    createdBy: cohort.createdBy,
+    createdDate: cohort.createdDate,
+    modifiedBy: cohort.modifiedBy,
+    modifiedDate: cohort.modifiedDate,
+  }
+})
+
 defineExpose({
+  authorship,
+  saveDisabledReason,
   // Status state
   totalConceptSets: computed(() => expression.value.ConceptSets?.length || 0),
   unusedConceptSetCount: computed(() => (expression.value.ConceptSets?.length || 0) - usedConceptSets.value.length),
@@ -1527,6 +1606,7 @@ defineExpose({
   handleExportDownload,
   handleExportCopy,
   openJsonDialog,
+  openSqlDialog,
   // Test-support contract: routing/UI state and pure helpers that have no
   // child component to observe or drive them through. Named here instead of
   // reached via Vue's private `$.setupState`/`$.provides`, so a rename shows

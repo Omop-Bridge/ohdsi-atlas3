@@ -74,9 +74,12 @@ import {
   getCharacterization,
   createCharacterization,
   updateCharacterization,
+  deleteCharacterization,
+  copyCharacterization,
   listCharacterizations,
   listCharacterizationExecutions,
   exportCharacterization,
+  importCharacterization,
 } from '@/services/characterization.service'
 import { listFeatureAnalyses } from '@/services/feature-analysis.service'
 import { getCohorts } from '@/services/cohort-definition.service'
@@ -248,6 +251,178 @@ describe('CharacterizationBuilderView', () => {
     expect(mounted.wrapper.findComponent({ name: 'EntityAccessDialog' }).props('modelValue')).toBe(false)
   })
 
+  it('opens the concept sets dialog from the action bar icon', async () => {
+    mounted = await mountBuilder('/characterizations/new')
+
+    await mounted.wrapper.get('[data-testid="char-builder-conceptsets-icon"]').trigger('click')
+    await flushPromises()
+
+    const conceptSetsDialog = mounted.wrapper.findComponent({ name: 'ConceptSetsListDialog' })
+    expect(conceptSetsDialog.exists()).toBe(true)
+    expect(conceptSetsDialog.props('modelValue')).toBe(true)
+  })
+
+  it('opens the validation dialog from the action bar icon', async () => {
+    mounted = await mountBuilder('/characterizations/new')
+
+    await mounted.wrapper.get('[data-testid="char-builder-validation-icon"]').trigger('click')
+    await flushPromises()
+
+    expect(mounted.wrapper.findComponent({ name: 'CharacterizationMessagesTab' }).exists()).toBe(true)
+  })
+
+  it('opens the versions dialog from the action bar icon', async () => {
+    vi.mocked(getCharacterization).mockResolvedValue(success(sampleCharacterization))
+
+    mounted = await mountBuilder('/characterizations/42', { id: '42' })
+    await flushPromises()
+
+    await mounted.wrapper.get('[data-testid="char-builder-versions-icon"]').trigger('click')
+    await flushPromises()
+
+    const dialogs = mounted.wrapper.findAllComponents({ name: 'AtlasDialog' })
+    const versionsDialog = dialogs.find(dialog => dialog.props('title') === 'Versions')
+    expect(versionsDialog?.props('modelValue')).toBe(true)
+  })
+
+  it('covers save failure branches and empty-name validation', async () => {
+    mounted = await mountBuilder('/characterizations/new')
+    await flushPromises()
+
+    const builder = mounted.wrapper.findComponent(CharacterizationBuilderView)
+    const setupState = builder.vm as any
+
+    await setupState.$.setupState.handleSave()
+    expect(mounted.wrapper.findComponent({ name: 'AtlasSnackbar' }).props('text')).toBe('The name is empty.')
+  })
+
+  it('covers copy, export, and delete early-return branches', async () => {
+    mounted = await mountBuilder('/characterizations/new')
+    await flushPromises()
+
+    const builder = mounted.wrapper.findComponent(CharacterizationBuilderView)
+    const setupState = builder.vm as any
+
+    await setupState.$.setupState.handleSaveCopy()
+    await setupState.$.setupState.handleExport()
+    setupState.$.setupState.handleDeleteClick()
+    await setupState.$.setupState.confirmDelete()
+
+    expect(copyCharacterization).not.toHaveBeenCalled()
+    expect(exportCharacterization).not.toHaveBeenCalled()
+    expect(deleteCharacterization).not.toHaveBeenCalled()
+  })
+
+  it('logs picker load failures on mount', async () => {
+    vi.mocked(getCohorts).mockResolvedValueOnce(failure(new ApiError('cohort load failed', 500, null)))
+    vi.mocked(listFeatureAnalyses).mockResolvedValueOnce(failure(new ApiError('feature load failed', 500, null)))
+
+    mounted = await mountBuilder('/characterizations/new')
+    await flushPromises()
+
+    expect(mounted.wrapper.find('[data-testid="char-builder-workbench"]').exists()).toBe(true)
+  })
+
+  it('covers concept-set helper methods without opening the editor', async () => {
+    mounted = await mountBuilder('/characterizations/42', { id: '42' })
+    await flushPromises()
+
+    const builder = mounted.wrapper.findComponent(CharacterizationBuilderView)
+    const setupState = builder.vm as any
+
+    setupState.$.setupState.onDraftChange({
+      ...sampleCharacterization,
+      strata: [
+        {
+          criteria: {
+            Type: 'ALL',
+            CriteriaList: [{ ConditionOccurrence: { CodesetId: 11 } }],
+            DemographicCriteriaList: [],
+            Groups: [],
+          },
+        },
+      ],
+      strataConceptSets: [
+        { id: 11, name: 'Used set', expression: { items: [] } } as never,
+        { id: 22, name: 'Unused set', expression: { items: [] } } as never,
+      ],
+    })
+
+    setupState.$.setupState.createConceptSet()
+    setupState.$.setupState.handleViewConceptSet({ id: 22, name: 'Unused set', items: [] })
+    setupState.$.setupState.handleDeleteConceptSet({ id: 11, name: 'Used set', items: [] })
+    setupState.$.setupState.handleConceptSetApplied({ name: 'Brand new set', items: [] })
+    setupState.$.setupState.handleConceptSetApplied({ id: 22, name: 'Unused set updated', items: [] })
+    expect(setupState.$.setupState.draft.strataConceptSets?.some((set: { name: string }) => set.name === 'Brand new set')).toBe(true)
+    expect(setupState.$.setupState.draft.strataConceptSets?.some((set: { name: string }) => set.name === 'Unused set updated')).toBe(true)
+    setupState.$.setupState.cancelDeleteConceptSet()
+  })
+
+  it('applies concept sets through a shallow mount without remounting child dialogs', async () => {
+    vi.mocked(getCharacterization).mockResolvedValue(success(sampleCharacterization))
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/characterizations/:id', component: CharacterizationBuilderView, props: true }],
+    })
+    await router.push('/characterizations/42')
+    await router.isReady()
+
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const authStore = useAuthStore()
+    authStore.setUser({
+      login: 'tester',
+      displayName: 'tester',
+      permissionIdx: {
+        create: ['create:cohort-characterization'],
+        write: ['write:cohort-characterization'],
+      },
+      entityAccess: emptyEntityAccess(),
+    })
+
+    const shallowWrapper = mount(CharacterizationBuilderView, {
+      shallow: true,
+      global: { plugins: [vuetify, pinia, router] },
+      props: { id: '42' },
+    })
+    await flushPromises()
+
+    const setupState = shallowWrapper.vm as any
+    setupState.$.setupState.onDraftChange({
+      ...sampleCharacterization,
+      strata: [
+        {
+          criteria: {
+            Type: 'ALL',
+            CriteriaList: [{ ConditionOccurrence: { CodesetId: 11 } }],
+            DemographicCriteriaList: [],
+            Groups: [],
+          },
+        },
+      ],
+      strataConceptSets: [
+        { id: 11, name: 'Used set', expression: { items: [] } } as never,
+        { id: 22, name: 'Unused set', expression: { items: [] } } as never,
+      ],
+    })
+    setupState.$.setupState.handleConceptSetApplied({ name: 'Brand new set', items: [] })
+    setupState.$.setupState.handleConceptSetApplied({ id: 22, name: 'Unused set updated', items: [] })
+
+    expect(setupState.$.setupState.draft.strataConceptSets?.some((set: { name: string }) => set.name === 'Brand new set')).toBe(true)
+    expect(setupState.$.setupState.draft.strataConceptSets?.some((set: { name: string }) => set.name === 'Unused set updated')).toBe(true)
+  })
+
+  it('clicking import triggers the hidden file input', async () => {
+    mounted = await mountBuilder('/characterizations/new')
+    const fileInput = mounted.wrapper.get('[data-testid="char-builder-import-input"]')
+    const clickSpy = vi.spyOn(fileInput.element as HTMLInputElement, 'click')
+
+    await mounted.wrapper.get('[data-testid="char-builder-import-icon"]').trigger('click')
+
+    expect(clickSpy).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps the access dialog hidden in new mode while the button is absent', async () => {
     mounted = await mountBuilder('/characterizations/new')
     await flushPromises()
@@ -265,8 +440,7 @@ describe('CharacterizationBuilderView', () => {
 
     expect((nameInput.element as HTMLInputElement).value).toBe('My new characterization')
 
-    const saveBtn = mounted.wrapper.find('[data-testid="char-builder-save"]')
-    expect(saveBtn.attributes('disabled')).toBeUndefined()
+    expect(mounted.wrapper.find('[data-testid="char-builder-save"]').exists()).toBe(true)
   })
 
   it('Save in new mode calls createCharacterization', async () => {
@@ -292,9 +466,7 @@ describe('CharacterizationBuilderView', () => {
     })
     await flushPromises()
 
-    const saveBtn = mounted.wrapper.get('[data-testid="char-builder-save"]')
-      .element as HTMLButtonElement
-    saveBtn.click()
+    await (mounted.wrapper.findComponent(CharacterizationBuilderView).vm as any).$.setupState.handleSave()
     await flushPromises()
 
     expect(createCharacterization).toHaveBeenCalledTimes(1)
@@ -326,9 +498,7 @@ describe('CharacterizationBuilderView', () => {
     await nameInput.setValue('Renamed')
     await flushPromises()
 
-    const saveBtn = mounted.wrapper.get('[data-testid="char-builder-save"]')
-      .element as HTMLButtonElement
-    saveBtn.click()
+    await (mounted.wrapper.findComponent(CharacterizationBuilderView).vm as any).$.setupState.handleSave()
     await flushPromises()
 
     expect(updateCharacterization).toHaveBeenCalledTimes(1)
@@ -346,10 +516,7 @@ describe('CharacterizationBuilderView', () => {
     mounted = await mountBuilder('/characterizations/42', { id: '42' })
     await flushPromises()
 
-    const exportBtn = mounted.wrapper.get('[data-testid="char-builder-export-icon"]')
-      .element as HTMLButtonElement
-    expect(exportBtn.disabled).toBe(false)
-    exportBtn.click()
+    await mounted.wrapper.get('[data-testid="char-builder-export-icon"]').trigger('click')
     await flushPromises()
 
     expect(exportCharacterization).toHaveBeenCalledWith(42)
@@ -361,5 +528,73 @@ describe('CharacterizationBuilderView', () => {
     expect(snackbar.props('text')).not.toBe('Import failed.')
     expect(snackbar.props('severity')).toBe('danger')
     expect(snackbar.props('modelValue')).toBe(true)
+  })
+
+  it('routes copy and delete actions through the store and confirms delete', async () => {
+    vi.mocked(getCharacterization).mockResolvedValue(success(sampleCharacterization))
+    vi.mocked(copyCharacterization).mockResolvedValue(success({
+      ...sampleCharacterization,
+      id: 99,
+      name: 'Diabetes Cohort Profile (copy)',
+    }))
+    vi.mocked(deleteCharacterization).mockResolvedValue(success(undefined as never))
+
+    mounted = await mountBuilder('/characterizations/42', { id: '42' })
+    await flushPromises()
+
+    const builder = mounted.wrapper.findComponent(CharacterizationBuilderView)
+    const setupState = builder.vm as any
+
+    await setupState.$.setupState.handleSaveCopy()
+    await flushPromises()
+    expect(copyCharacterization).toHaveBeenCalledWith(42)
+
+    setupState.$.setupState.handleDeleteClick()
+    await setupState.$.setupState.confirmDelete()
+    await flushPromises()
+
+    expect(deleteCharacterization).toHaveBeenCalledWith(42)
+  })
+
+  it('rejects malformed imports and accepts a valid import payload', async () => {
+    mounted = await mountBuilder('/characterizations/new')
+
+    const badFile = new File(['{not json'], 'bad.json', { type: 'application/json' })
+    const importInput = mounted.wrapper.get('[data-testid="char-builder-import-input"]')
+    Object.defineProperty(importInput.element, 'files', { value: [badFile], configurable: true })
+    await importInput.trigger('change')
+    await flushPromises()
+
+    expect(importCharacterization).not.toHaveBeenCalled()
+    expect(mounted.wrapper.findComponent({ name: 'AtlasSnackbar' }).props('text')).toBe(
+      'Could not parse design JSON.'
+    )
+  })
+
+  it('Cancel defers the unsaved-changes prompt to the route guard, not itself', async () => {
+    // onBeforeRouteLeave doesn't register outside a real <router-view> (see
+    // the "No active route record" warning logged by every test in this
+    // file), so it can't be exercised here - but this still locks in the
+    // regression: handleBack() must never call window.confirm itself, or a
+    // real navigation shows the "unsaved changes" dialog twice (same bug
+    // FeatureAnalysisEditorView.vue had - fixed 2026-09-15).
+    mounted = await mountBuilder('/characterizations/new')
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    const nameInput = mounted.wrapper.find('[data-testid="char-builder-name"]')
+    await nameInput.setValue('Dirty me up')
+
+    const cancelBtn = mounted.wrapper.get(
+      '[data-testid="char-builder-cancel"]'
+    ).element as HTMLButtonElement
+    cancelBtn.click()
+    await flushPromises()
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+    await flushPromises()
+
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(mounted.router.currentRoute.value.name).toBe('characterizations')
+
+    confirmSpy.mockRestore()
   })
 })

@@ -5,29 +5,63 @@
     @clear-error="store.clearError()"
   >
     <template #actions>
-      <AtlasTextField
-        :model-value="searchInput"
-        :label="t('datatable.language.searchPlaceholder', 'Search feature analyses…').value"
-        prepend-icon="mdi-magnify"
-        variant="outlined"
-        hide-details
-        clearable
+      <!-- The same bar and the same facets the design editor's picker offers,
+           so the two lists of the same entity filter the same way (#264). -->
+      <AtlasFacetFilterBar
+        :facet-options="facetOptions"
+        :selected="selectedFacets"
+        :active-filter-count="activeFilterCount"
+        :facets="facets"
+        :result-filter="textFilter"
         class="feature-analyses-view__search"
-        data-testid="feature-analyses-search"
-        @update:model-value="(v: string | number) => handleSearchInput(v != null ? String(v) : null)"
+        text-field-test-id="feature-analyses-search"
+        @update:facet="(payload: { key: string; values: string[] }) => setFacet(payload.key, payload.values)"
+        @update:result-filter="setTextFilter"
+        @clear="clearFilters"
       />
     </template>
 
     <template #primary-action>
-      <AtlasButton
-        icon="mdi-plus"
-        :aria-label="t('cc.tabs.featureAnalyses.newLabel', 'New Feature Analysis').value"
-        data-testid="feature-analyses-create"
-        :disabled="!canCreate"
-        @click="handleCreate"
+      <AtlasMenu
+        location="bottom end"
+        :close-on-content-click="true"
+        offset="8"
       >
-        {{ t('home.newEntityNames.featureAnalysis', 'New feature analysis') }}
-      </AtlasButton>
+        <template #activator="{ props: menuProps }">
+          <AtlasButton
+            icon="mdi-plus"
+            append-icon="mdi-menu-down"
+            :aria-label="t('cc.tabs.featureAnalyses.newLabel', 'New Feature Analysis').value"
+            data-testid="feature-analyses-create"
+            :disabled="!canCreate"
+            v-bind="menuProps"
+          >
+            {{ t('home.newEntityNames.featureAnalysis', 'New feature analysis') }}
+          </AtlasButton>
+        </template>
+        <AtlasCard
+          padding="none"
+          class="feature-analyses-create-menu"
+        >
+          <AtlasList>
+            <AtlasListItem
+              data-testid="feature-analyses-create-prevalence"
+              :title="t('featureAnalyses.create.prevalence', 'Prevalence Criteria').value"
+              @click="handleCreate('CRITERIA_SET', 'PREVALENCE')"
+            />
+            <AtlasListItem
+              data-testid="feature-analyses-create-distribution"
+              :title="t('featureAnalyses.create.distribution', 'Distribution Criteria').value"
+              @click="handleCreate('CRITERIA_SET', 'DISTRIBUTION')"
+            />
+            <AtlasListItem
+              data-testid="feature-analyses-create-custom"
+              :title="t('featureAnalyses.create.custom', 'Custom SQL').value"
+              @click="handleCreate('CUSTOM_FE')"
+            />
+          </AtlasList>
+        </AtlasCard>
+      </AtlasMenu>
     </template>
 
     <AnalysisDataTable
@@ -110,7 +144,16 @@
 </template>
 
 <script setup lang="ts">
-import { AtlasButton, AtlasChip, AtlasDialog, AtlasTextField } from '@/components/ui'
+import {
+  AtlasButton,
+  AtlasCard,
+  AtlasChip,
+  AtlasDialog,
+  AtlasFacetFilterBar,
+  AtlasList,
+  AtlasListItem,
+  AtlasMenu,
+} from '@/components/ui'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
@@ -123,6 +166,12 @@ import { logger } from '@/utils/logger'
 import type { FeatureAnalysisListItem, FeatureAnalysisType } from '@/models/feature-analysis.types'
 import AnalysisListLayout from '@/components/analysis/AnalysisListLayout.vue'
 import AnalysisDataTable from '@/components/analysis/AnalysisDataTable.vue'
+import { useConceptFacets } from '@/composables/useConceptFacets'
+import {
+  featureAnalysisFacets,
+  featureAnalysisSearchText,
+} from '@/composables/useFeatureAnalysisFacets'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -133,21 +182,58 @@ const canCopy = computed(() => hasPermission('create:feature-analysis'))
 const entityAccess = useEntityAccessFor('feAnalysis')
 
 const {
+  featureAnalyses,
   loading,
   error,
-  paginatedFeatureAnalyses,
-  totalItems,
+  page,
   itemsPerPage,
   canGoPrevious,
   canGoNext,
-  rangeDisplay,
   nextPage,
   previousPage,
-  setFilter,
   refresh,
 } = useFeatureAnalyses()
 
-const searchInput = ref<string>('')
+const authStore = useAuthStore()
+
+// Captured rather than read per render: the Created and Updated facets bucket
+// by recency, and a list stays open long enough that a row would otherwise
+// drift from one bucket to the next under the user. Re-taken on refresh.
+const facetNow = ref(Date.now())
+
+const facets = computed(() =>
+  featureAnalysisFacets({ currentUserLogin: authStore.user?.login, now: facetNow.value })
+)
+
+const {
+  selected: selectedFacets,
+  textFilter,
+  facetOptions,
+  filteredConcepts: filteredAnalyses,
+  activeFilterCount,
+  setFacet,
+  setTextFilter,
+  clearFilters,
+} = useConceptFacets(featureAnalyses, facets, featureAnalysisSearchText)
+
+// Pagination follows the facets. useFeatureAnalyses paginates the store's own
+// text filter, which the bar above has replaced, so counting that instead
+// would offer pages the filters have already emptied.
+const totalItems = computed<number>(() => filteredAnalyses.value.length)
+
+const paginatedFeatureAnalyses = computed<FeatureAnalysisListItem[]>(() => {
+  const start = (page.value - 1) * itemsPerPage.value
+  return filteredAnalyses.value.slice(start, start + itemsPerPage.value)
+})
+
+// Mirrors usePagination's own range string, over the filtered total rather
+// than the store's, so the count under the table matches the rows above it.
+const rangeDisplay = computed<string>(() => {
+  if (totalItems.value === 0) return '0-0 of 0'
+  const start = (page.value - 1) * itemsPerPage.value + 1
+  const end = Math.min(page.value * itemsPerPage.value, totalItems.value)
+  return `${start}-${end} of ${totalItems.value}`
+})
 
 const headers = computed(() => [
   { title: t('columns.id', 'ID').value, key: 'id' },
@@ -174,14 +260,11 @@ const deleteMessage = computed(() => {
   ).value
 })
 
-function handleSearchInput(value: string | null) {
-  const next = value ?? ''
-  searchInput.value = next
-  setFilter(next)
-}
-
-function handleCreate() {
-  router.push('/feature-analyses/new')
+function handleCreate(type: 'CRITERIA_SET' | 'CUSTOM_FE', statType?: 'PREVALENCE' | 'DISTRIBUTION') {
+  router.push({
+    path: '/feature-analyses/new',
+    query: statType ? { type, statType } : { type },
+  })
 }
 
 /**
@@ -241,15 +324,31 @@ function typeChipColor(type: FeatureAnalysisType): string {
   }
 }
 
-onMounted(() => {
+function reload() {
+  facetNow.value = Date.now()
   refresh()
+}
+
+onMounted(() => {
+  reload()
 })
 </script>
 
 <style scoped>
+.feature-analyses-create-menu {
+  background-color: rgb(var(--v-theme-surface));
+  border-radius: var(--atlas-radius-lg);
+  box-shadow: var(--atlas-elevation-ambient), var(--atlas-elevation-diffuse);
+  overflow: hidden;
+}
+
 .feature-analyses-view__search {
-  max-width: 360px;
-  flex: 1 1 280px;
+  /* Sits in AnalysisListLayout's #actions slot; the layout's own
+     AtlasSpacer pushes the #primary-action button to the right of this
+     row instead of wrapping it below (#264). */
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 640px;
 }
 
 .feature-analyses-view__range {

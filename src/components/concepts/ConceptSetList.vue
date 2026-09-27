@@ -29,6 +29,15 @@
           >
             {{ t('components.conceptSetBuilder.newConceptSet', 'New concept set') }}
           </AtlasButton>
+
+          <EntityImportButton
+            :label="t('common.import', 'Import').value"
+            testid="concept-sets-import"
+            :disabled="!canCreate"
+            :import-design="importDesign"
+            @imported="onImported"
+            @failed="(message: string) => { store.error = message }"
+          />
         </template>
       </ConceptSetFilters>
     </div>
@@ -90,7 +99,7 @@
 
         <!-- Modified Date -->
         <template #item.modifiedDate="{ item }">
-          {{ formatDate(item.modifiedDate) }}
+          {{ formatDate(lastTouchedDate(item)) }}
         </template>
 
         <!-- Author (Created By) -->
@@ -162,11 +171,13 @@ import { useI18n } from '@/composables/useI18n'
 import { useConceptSetsStore } from '@/stores/concept-sets'
 import { usePermissions } from '@/composables/usePermissions'
 import { useEntityAccessFor } from '@/composables/useEntityAccess'
-import { formatDate } from '@/utils/date-format'
+import { formatDate, lastTouchedDate } from '@/utils/date-format'
 import { tagColor, tagContrastColor } from '@/utils/tag-color'
 import type { ConceptSetListItem } from '@/models/concept-set.types'
 import ConceptSetFilters from './ConceptSetFilters.vue'
 import { AtlasAlert, AtlasButton, AtlasCard, AtlasChip, AtlasDataTable, AtlasIcon, AtlasIconButton, AtlasSkeleton } from '@/components/ui'
+import EntityImportButton from '@/components/shared/EntityImportButton.vue'
+import { importConceptSet } from '@/services/concept-set.service'
 
 const { t } = useI18n()
 const { hasPermission } = usePermissions()
@@ -209,6 +220,9 @@ const headers = [
   {
     title: t('columns.updated', 'Updated').value,
     key: 'modifiedDate',
+    // Sorted off the same fallback the cell displays, so a set that was only
+    // ever created orders by its creation date rather than sinking (#292).
+    value: (item: unknown) => lastTouchedDate(item as ConceptSetListItem),
     sortable: true,
     width: '120px',
   },
@@ -252,6 +266,26 @@ function onRowClick(_event: Event, payload: { item: ConceptSetListItem }) {
     store.openEditEditor(payload.item.id)
   }
 }
+
+async function importDesign(
+  design: unknown,
+  meta: { fileName: string }
+): Promise<{ id?: number | string }> {
+  const created = await importConceptSet(design, meta.fileName)
+  return { id: created.id }
+}
+
+// The editor overlays this list rather than replacing it via router.push, so
+// it opens through the store like onEditClick does; nothing else refetches
+// this list, so we must do it explicitly before opening or the imported set
+// is missing on close, inviting a duplicate re-import (#267).
+async function onImported(entity: { id?: number | string }) {
+  if (entity.id == null) return
+  await store.fetchAll()
+  await store.openEditEditor(entity.id)
+}
+
+defineExpose({ importDesign, onImported })
 </script>
 
 <style scoped>
