@@ -11,8 +11,9 @@
 import { z } from 'zod'
 
 import type { Tag } from './cohort.types'
-import type { FeatureAnalysisType } from './feature-analysis.types'
-import { FeatureAnalysisTypeSchema } from './feature-analysis.types'
+import { TagSchema } from './webapi.types'
+import type { FeatureAnalysisDomain, FeatureAnalysisType } from './feature-analysis.types'
+import { FeatureAnalysisDomainSchema, FeatureAnalysisTypeSchema } from './feature-analysis.types'
 import { StoredCriteriaGroupSchema } from '@/models/stored-criteria-group'
 import type { CriteriaGroup, ConceptSet } from '@/models/circe-types'
 
@@ -39,6 +40,7 @@ export interface LinkedFeatureAnalysis {
   id: number
   name?: string
   description?: string
+  domain?: FeatureAnalysisDomain
   // `supports*` flags come from the backing FeatureAnalysis design and tell the
   // editor whether the toggle is even available; `include*` flags are the
   // user's choice for this particular characterization.
@@ -54,6 +56,7 @@ export const LinkedFeatureAnalysisSchema = z
     id: z.number(),
     name: z.string().optional(),
     description: z.string().optional(),
+    domain: FeatureAnalysisDomainSchema.optional(),
     supportsAnnual: z.boolean().optional(),
     supportsTemporal: z.boolean().optional(),
     includeAnnual: z.boolean().optional(),
@@ -105,14 +108,6 @@ const UserRefSchema = z.union([
     })
     .passthrough(),
 ])
-
-const TagSchema = z
-  .object({
-    id: z.number().optional(),
-    name: z.string(),
-    color: z.string().optional(),
-  })
-  .passthrough()
 
 // ============================================================================
 // CharacterizationDefinition
@@ -215,6 +210,11 @@ export const GenerationStatusSchema = z.enum([
   'STOPPING',
 ])
 
+const CharacterizationExecutionStatusSchema = z.preprocess(
+  status => status === 'STOPPED' ? 'CANCELED' : status,
+  GenerationStatusSchema
+)
+
 export interface CharacterizationExecution {
   id: number
   ccGenerationId?: number
@@ -235,11 +235,11 @@ export const CharacterizationExecutionSchema = z
     id: z.number(),
     ccGenerationId: z.number().optional(),
     hashCode: z.union([z.string(), z.number()]).nullable().optional(),
-    status: GenerationStatusSchema,
+    status: CharacterizationExecutionStatusSchema,
     startTime: z.number().optional(),
     endTime: z.number().nullable().optional(),
     duration: z.number().optional(),
-    executionStatus: GenerationStatusSchema.optional(),
+    executionStatus: CharacterizationExecutionStatusSchema.optional(),
     sourceKey: z.string(),
     designHash: z.string().optional(),
     cdmDatabaseSchema: z.string().optional(),
@@ -250,6 +250,74 @@ export const CharacterizationExecutionSchema = z
 // ============================================================================
 // Result statistics
 // ============================================================================
+
+/** A cohort column supplied by a WebAPI characterization result report. */
+export interface CharacterizationResultCohort {
+  cohortId: number
+  cohortName: string
+}
+
+export const CharacterizationResultCohortSchema = z
+  .object({
+    cohortId: z.number(),
+    cohortName: z.string(),
+  })
+  .passthrough()
+
+/**
+ * One analysis report in WebAPI's GenerationResults response. Items remain
+ * unparsed here because prevalence and distribution rows have distinct shapes.
+ */
+export interface CharacterizationResultReport {
+  analysisId: number | null
+  analysisName: string
+  cohorts: CharacterizationResultCohort[]
+  domainIds: string[]
+  items: unknown[]
+  resultType?: 'PREVALENCE' | 'DISTRIBUTION'
+  isComparative?: boolean
+  isSummary?: boolean
+  faType?: FeatureAnalysisType | null
+}
+
+export const CharacterizationResultReportSchema = z
+  .object({
+    analysisId: z.number().nullable(),
+    analysisName: z.string(),
+    cohorts: z.array(CharacterizationResultCohortSchema),
+    domainIds: z.array(z.string()),
+    items: z.array(z.unknown()),
+    resultType: z.enum(['PREVALENCE', 'DISTRIBUTION']).optional(),
+    isComparative: z.boolean().optional(),
+    isSummary: z.boolean().optional(),
+    faType: FeatureAnalysisTypeSchema.nullable().optional(),
+  })
+  .passthrough()
+
+/**
+ * Person count per cohort and subgroup: cohortId -> strataId -> N, where
+ * strataId "0" is Overall. A missing entry means the N is unknown.
+ */
+export type StrataCounts = Record<string, Record<string, number>>
+
+/** The authoritative response from POST generation/{id}/result. */
+export interface GenerationResults {
+  reports: CharacterizationResultReport[]
+  count?: number
+  prevalenceThreshold?: number
+  showEmptyResults?: boolean | null
+  strataCounts?: StrataCounts | null
+}
+
+export const GenerationResultsSchema = z
+  .object({
+    reports: z.array(CharacterizationResultReportSchema),
+    count: z.number().optional(),
+    prevalenceThreshold: z.number().optional(),
+    showEmptyResults: z.boolean().nullable().optional(),
+    strataCounts: z.record(z.record(z.number())).nullable().optional(),
+  })
+  .passthrough()
 
 // Two-level keying [strataId][cohortId] -> value. Strings because the report
 // service serialises numeric ids as JSON object keys.
@@ -265,9 +333,13 @@ export interface PrevalenceStat {
   domainId?: string
   faType?: FeatureAnalysisType
   cohorts: LinkedCohort[]
+  strataNames: Record<string, string>
   count: Record<string, Record<string, number>>
   pct: Record<string, Record<string, number>>
   stdDiff?: number
+  stdDiffByStrata?: Record<string, number>
+  /** Keyed by cohort id. Only present for cohorts that have temporal/annual data. */
+  temporalByCohort?: Record<string, CohortTemporalData>
 }
 
 export const PrevalenceStatSchema = z
@@ -281,9 +353,12 @@ export const PrevalenceStatSchema = z
     domainId: z.string().optional(),
     faType: FeatureAnalysisTypeSchema.optional(),
     cohorts: z.array(LinkedCohortSchema),
+    strataNames: z.record(z.string()).default({}),
     count: NestedNumberMapSchema,
     pct: NestedNumberMapSchema,
     stdDiff: z.number().optional(),
+    stdDiffByStrata: z.record(z.number()).optional(),
+    temporalByCohort: z.record(z.lazy(() => CohortTemporalDataSchema)).optional(),
   })
   .passthrough()
 
@@ -297,6 +372,7 @@ export interface DistributionStat {
   domainId?: string
   faType?: FeatureAnalysisType
   cohorts: LinkedCohort[]
+  strataNames: Record<string, string>
   avg: Record<string, Record<string, number>>
   stdDev: Record<string, Record<string, number>>
   min: Record<string, Record<string, number>>
@@ -319,6 +395,7 @@ export const DistributionStatSchema = z
     domainId: z.string().optional(),
     faType: FeatureAnalysisTypeSchema.optional(),
     cohorts: z.array(LinkedCohortSchema),
+    strataNames: z.record(z.string()).default({}),
     avg: NestedNumberMapSchema,
     stdDev: NestedNumberMapSchema,
     min: NestedNumberMapSchema,
@@ -339,21 +416,48 @@ export const ComparativeDistributionStatSchema = DistributionStatSchema.extend({
   stdDiff: z.number(),
 })
 
-export interface TemporalDataPoint {
-  timeId: number
-  year?: number
+// Temporal / annual series WebAPI attaches to each non-comparative preset
+// prevalence item in the generation `/result` report. `avg` is a proportion
+// (0-1), unlike the item's `pct` which is already a percentage.
+export interface TemporalItem {
   count: number
-  pct: number
+  avg: number
+  startDay: number
+  endDay: number
 }
 
-export const TemporalDataPointSchema = z
+export const TemporalItemSchema = z
   .object({
-    timeId: z.number(),
-    year: z.number().optional(),
     count: z.number(),
-    pct: z.number(),
+    avg: z.number(),
+    startDay: z.number(),
+    endDay: z.number(),
   })
   .passthrough()
+
+export interface TemporalAnnualItem {
+  count: number
+  avg: number
+  year: number
+}
+
+export const TemporalAnnualItemSchema = z
+  .object({
+    count: z.number(),
+    avg: z.number(),
+    year: z.number(),
+  })
+  .passthrough()
+
+export interface CohortTemporalData {
+  temporal: TemporalItem[]
+  temporalAnnual: TemporalAnnualItem[]
+}
+
+export const CohortTemporalDataSchema = z.object({
+  temporal: z.array(TemporalItemSchema),
+  temporalAnnual: z.array(TemporalAnnualItemSchema),
+})
 
 export interface Table1Config {
   groupByAnalysis: boolean
@@ -427,7 +531,7 @@ export interface Table1Filters {
   threshold: number
   selectedAnalysisIds: number[]
   selectedDomains: string[]
-  selectedCohortId: number | null
+  selectedCohortIds: number[]
   /** Free text narrowing the covariate rows; empty keeps them all. */
   search: string
 }
@@ -436,6 +540,6 @@ export const DEFAULT_TABLE1_FILTERS: Table1Filters = {
   threshold: 0,
   selectedAnalysisIds: [],
   selectedDomains: [],
-  selectedCohortId: null,
+  selectedCohortIds: [],
   search: '',
 }

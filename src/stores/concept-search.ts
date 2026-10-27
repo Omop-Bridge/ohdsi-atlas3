@@ -3,6 +3,7 @@
  * State management for concept search functionality
  */
 import { defineStore } from 'pinia'
+import { useI18n } from '@/composables/useI18n'
 import { ref, computed, watch } from 'vue'
 import { searchConcepts, getConceptRecordCounts } from '@/services/concept-search.service'
 import type { Concept } from '@/models/concept-set.types'
@@ -12,7 +13,9 @@ import { logger } from '@/utils/logger'
 import { debounce } from '@/utils/debounce'
 import { useConceptFacets } from '@/composables/useConceptFacets'
 
-export const useConceptSearchStore = defineStore('concept-search', () => {
+function createConceptSearchStore(id: string) {
+  return defineStore(id, () => {
+  const { tv } = useI18n()
   // ============================================================================
   // State
   // ============================================================================
@@ -33,8 +36,8 @@ export const useConceptSearchStore = defineStore('concept-search', () => {
   const itemsPerPage = ref<number>(25)
 
   // Sorting state
-  const sortBy = ref<string | null>('conceptId')
-  const sortDesc = ref<boolean>(false)
+  const sortBy = ref<string | null>('descendantRecordCount')
+  const sortDesc = ref<boolean>(true)
 
   // Faceted filtering over the result columns (vocabulary, domain, etc.)
   const facets = useConceptFacets(allConcepts)
@@ -112,7 +115,7 @@ export const useConceptSearchStore = defineStore('concept-search', () => {
   // Actions
   // ============================================================================
 
-  async function search(term: string) {
+  async function search(term: string, options?: { domains?: string[] }) {
     if (term.length < 3) {
       allConcepts.value = []
       error.value = null
@@ -131,7 +134,10 @@ export const useConceptSearchStore = defineStore('concept-search', () => {
         throw new Error('No vocabulary source available.')
       }
 
-      const result = await searchConcepts(sourceKey, term)
+      const domains = options?.domains?.filter(Boolean) ?? []
+      const result = domains.length > 0
+        ? await searchConcepts(sourceKey, term, { domain: domains })
+        : await searchConcepts(sourceKey, term)
       if (!result.success) {
         throw result.error
       }
@@ -192,7 +198,7 @@ export const useConceptSearchStore = defineStore('concept-search', () => {
       await loadRecordCounts(sourceKey)
     } catch (err) {
       logger.error('ConceptSearchStore', 'Failed to load record counts', err)
-      error.value = 'Failed to load record counts for the selected source.'
+      error.value = tv('search.errors.recordCountsFailed')
     }
   }
 
@@ -268,4 +274,9 @@ export const useConceptSearchStore = defineStore('concept-search', () => {
     setRecordCountSource,
     clearSearch,
   }
-})
+  })
+}
+
+export const useConceptSearchStore = createConceptSearchStore('concept-search')
+export const useConceptPickerSearchStore = createConceptSearchStore('concept-picker-search')
+export const useConceptSetSearchStore = createConceptSearchStore('concept-set-search')

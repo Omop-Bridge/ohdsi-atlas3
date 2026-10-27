@@ -29,10 +29,12 @@ vi.mock('@/composables/usePermissions', () => ({
 }))
 
 vi.mock('@/composables/useEntityAccess', () => ({
-  useEntityAccessFor: () => ({ canWrite: () => true }),
+  useEntityAccessFor: () => ({ canWrite: () => true, canDelete: () => true }),
 }))
 
 import ConceptSetList from '@/components/concepts/ConceptSetList.vue'
+import { AtlasChip } from '@/components/ui'
+import { useConceptSetsStore } from '@/stores/concept-sets'
 
 const vuetify = createVuetify({ components, directives })
 
@@ -73,5 +75,13 @@ describe('ConceptSetList tags column', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('Active')
+
+    const tagChip = wrapper.findAllComponents(AtlasChip)
+      .find(chip => chip.text().trim() === 'Active')
+    expect(tagChip).toBeDefined()
+
+    await tagChip!.trigger('click')
+
+    expect(useConceptSetsStore().filters.selectedTags).toEqual(['Active'])
   })
 })

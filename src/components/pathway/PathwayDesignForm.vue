@@ -5,7 +5,7 @@
   >
     <section class="rail-section">
       <header class="rail-section__header">
-        <span class="text-eyebrow">{{ t('facets.caption.targetCohorts', 'Target Cohorts').value }}</span>
+        <span class="text-eyebrow">{{ t('facets.caption.targetCohorts').value }}</span>
         <AtlasButton
           variant="ghost"
           size="sm"
@@ -13,7 +13,7 @@
           :disabled="readonly"
           @click="showTargetPicker = true"
         >
-          {{ t('common.add', 'Add').value }}
+          {{ t('common.add').value }}
         </AtlasButton>
       </header>
       <PathwayCohortList
@@ -22,7 +22,7 @@
         @rename="(id, name) => store.renameTargetCohort(id, name)"
         @remove="id => store.removeTargetCohort(id)"
       />
-      <PathwayCohortPicker
+      <CohortPickerDialog
         v-model="showTargetPicker"
         :excluded-ids="targetIds"
         @select="refs => refs.forEach(r => store.addTargetCohort(r))"
@@ -31,7 +31,7 @@
 
     <section class="rail-section">
       <header class="rail-section__header">
-        <span class="text-eyebrow">{{ t('columns.eventCohort', 'Event Cohorts').value }}</span>
+        <span class="text-eyebrow">{{ t('columns.eventCohort').value }}</span>
         <AtlasButton
           variant="ghost"
           size="sm"
@@ -39,7 +39,7 @@
           :disabled="readonly"
           @click="showEventPicker = true"
         >
-          {{ t('common.add', 'Add').value }}
+          {{ t('common.add').value }}
         </AtlasButton>
       </header>
       <PathwayCohortList
@@ -48,7 +48,7 @@
         @rename="(id, name) => store.renameEventCohort(id, name)"
         @remove="id => store.removeEventCohort(id)"
       />
-      <PathwayCohortPicker
+      <CohortPickerDialog
         v-model="showEventPicker"
         :excluded-ids="eventIds"
         @select="refs => refs.forEach(r => store.addEventCohort(r))"
@@ -57,7 +57,7 @@
 
     <section class="rail-section">
       <header class="rail-section__header">
-        <span class="text-eyebrow">{{ t('ple.spec.analysisSettings', 'Settings').value }}</span>
+        <span class="text-eyebrow">{{ t('ple.spec.analysisSettings').value }}</span>
       </header>
       <PathwaySettings
         :model-value="settings"
@@ -73,8 +73,8 @@ import { AtlasButton } from '@/components/ui'
 import { ref, computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { usePathwayStore } from '@/stores/pathway'
+import CohortPickerDialog from '@/components/shared/CohortPickerDialog.vue'
 import PathwayCohortList from './PathwayCohortList.vue'
-import PathwayCohortPicker from './PathwayCohortPicker.vue'
 import PathwaySettings from './PathwaySettings.vue'
 import { useI18n } from '@/composables/useI18n'
 

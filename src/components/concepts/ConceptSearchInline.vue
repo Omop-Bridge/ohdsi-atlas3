@@ -44,13 +44,33 @@
       :active-filter-count="store.activeFacetCount"
       :result-filter="store.resultFilter"
       class="mb-4"
-      @update:facet="({ key, values }) => store.setFacet(key, values)"
+      @update:facet="onFacetUpdate"
       @update:result-filter="(v: string) => store.setResultFilter(v)"
-      @clear="store.clearFacets()"
-    />
+      @clear="onClearFacets"
+    >
+      <template
+        v-if="recordCountSources.length > 0"
+        #append
+      >
+        <AtlasSelect
+          :model-value="effectiveRecordCountSource"
+          :items="recordCountSources"
+          item-title="sourceName"
+          item-value="sourceKey"
+          :label="viewCountsForLabel"
+          density="compact"
+          variant="outlined"
+          hide-details
+          :loading="store.loadingRecordCounts"
+          :menu-props="{ zIndex: 2300 }"
+          data-testid="record-count-source"
+          @update:model-value="(v: unknown) => store.setRecordCountSource(String(v))"
+        />
+      </template>
+    </ConceptFacetFilters>
 
     <ConceptAddOptions
-      v-if="!store.isEmpty"
+      v-if="!store.isEmpty && !selectionMode"
       v-model="addFlags"
       :selected-count="selected.length"
       class="mb-4"
@@ -62,10 +82,10 @@
       v-model:selected="selected"
       :concepts="store.concepts"
       :loading="store.loading"
+      :loading-record-counts="store.loadingRecordCounts"
       :total-items="store.totalCount"
       :page="store.page"
       :items-per-page="store.itemsPerPage"
-      :show-add-button="true"
       :selectable="true"
       :concepts-in-set="conceptsInSet"
       @update:page="onPageChange"
@@ -74,15 +94,37 @@
       @remove-concept="onRemoveConcept"
       @view-concept="(payload) => emit('view-concept', payload)"
     />
+
+    <div
+      v-if="selectionMode"
+      class="d-flex justify-end ga-2 mt-4"
+    >
+      <AtlasButton
+        variant="secondary"
+        data-testid="concept-selection-cancel"
+        @click="emit('selection-cancelled')"
+      >
+        {{ t('common.cancel') }}
+      </AtlasButton>
+      <AtlasButton
+        :disabled="selected.length === 0"
+        data-testid="concept-selection-complete"
+        @click="completeSelection"
+      >
+        {{ t('common.add') }} ({{ selected.length }})
+      </AtlasButton>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { AtlasAlert, AtlasButton, AtlasTextField } from '@/components/ui'
+import { ref, computed, watch } from 'vue'
+import { AtlasAlert, AtlasButton, AtlasSelect, AtlasTextField } from '@/components/ui'
 import { useI18n } from '@/composables/useI18n'
-import { useConceptSearchStore } from '@/stores/concept-search'
+import { useConceptPickerSearchStore, useConceptSetSearchStore } from '@/stores/concept-search'
 import { useConceptSetsStore } from '@/stores/concept-sets'
+import { useWebAPIStore } from '@/stores/webapi'
+import { getSourceKey } from '@/config/webapi'
 import ConceptTable from './ConceptTable.vue'
 import ConceptFacetFilters from './ConceptFacetFilters.vue'
 import ConceptAddOptions from './ConceptAddOptions.vue'
@@ -90,12 +132,37 @@ import type { Concept, ConceptAddFlags } from '@/models/concept-set.types'
 
 const { t, tv } = useI18n()
 
+const props = withDefaults(defineProps<{
+  selectionMode?: boolean
+  domainFilter?: string
+  preselectedConceptIds?: number[]
+}>(), {
+  selectionMode: false,
+  domainFilter: undefined,
+  preselectedConceptIds: () => [],
+})
+const selectionMode = computed(() => props.selectionMode)
+
 // ============================================================================
 // Stores
 // ============================================================================
 
-const store = useConceptSearchStore()
+const store = props.selectionMode
+  ? useConceptPickerSearchStore()
+  : useConceptSetSearchStore()
 const conceptSetsStore = useConceptSetsStore()
+const webapiStore = useWebAPIStore()
+
+const selectedSourceKey = computed(
+  () => webapiStore.getValidVocabularySource() || getSourceKey() || ''
+)
+const viewCountsForLabel = t('search.viewCountMessage')
+
+// Only sources that can report counts; a vocabulary-only source would blank the columns.
+const recordCountSources = computed(() => webapiStore.resultsSources ?? [])
+const effectiveRecordCountSource = computed(
+  () => store.recordCountSourceKey ?? selectedSourceKey.value
+)
 
 // ============================================================================
 // Emits
@@ -106,6 +173,8 @@ const emit = defineEmits<{
   'add-concepts': [concepts: Concept[], flags: Required<ConceptAddFlags>]
   'remove-concept': [concept: Concept]
   'view-concept': [payload: { conceptId: number; sourceKey: string }]
+  'selection-complete': [concepts: Concept[]]
+  'selection-cancelled': []
 }>()
 
 // ============================================================================
@@ -114,6 +183,23 @@ const emit = defineEmits<{
 
 const searchInput = ref<string>('')
 const selected = ref<number[]>([])
+const selectedDomains = ref<string[]>(props.domainFilter ? [props.domainFilter] : [])
+
+watch(
+  () => props.preselectedConceptIds,
+  ids => {
+    selected.value = [...ids]
+  },
+  { immediate: true }
+)
+
+watch(
+  () => props.domainFilter,
+  domain => {
+    selectedDomains.value = domain ? [domain] : []
+    applyDomainFilter()
+  }
+)
 
 // Sticky across searches on purpose: the point of the add box is to set the
 // intent once and then collect concepts over several queries.
@@ -134,7 +220,7 @@ const isSearchValid = computed(() => {
 const validationError = computed(() => {
   const trimmed = searchInput.value.trim()
   if (trimmed.length > 0 && trimmed.length < 3) {
-    return 'Please enter at least 3 characters'
+    return t('search.minLengthHint', { min: 3 }).value
   }
   return undefined
 })
@@ -164,11 +250,17 @@ function onSearchInput(value: string | null) {
   // No auto-search on typing to avoid blocking user flow
 }
 
-function onSearch() {
+async function onSearch() {
   if (!isSearchValid.value) return
 
   // Immediate search when user clicks button or presses Enter
-  store.search(searchInput.value.trim())
+  const term = searchInput.value.trim()
+  if (selectedDomains.value.length > 0) {
+    await store.search(term, { domains: selectedDomains.value })
+  } else {
+    await store.search(term)
+  }
+  applyDomainFilter()
 }
 
 function onClear() {
@@ -184,6 +276,22 @@ function onItemsPerPageChange(itemsPerPage: number) {
   store.updatePagination(1, itemsPerPage)
 }
 
+function applyDomainFilter() {
+  store.setFacet('domainId', selectedDomains.value)
+}
+
+function onFacetUpdate({ key, values }: { key: string; values: string[] }) {
+  if (key === 'domainId') {
+    selectedDomains.value = values
+  }
+  store.setFacet(key, values)
+}
+
+function onClearFacets() {
+  selectedDomains.value = []
+  store.clearFacets()
+}
+
 function onAddConcept(concept: Concept) {
   emit('add-concept', concept, addFlags.value)
 }
@@ -197,6 +305,14 @@ function onAddSelected() {
     store.allConcepts.filter(c => ids.has(c.conceptId)),
     addFlags.value
   )
+  selected.value = []
+}
+
+function completeSelection() {
+  const ids = new Set(selected.value)
+  if (ids.size === 0) return
+
+  emit('selection-complete', store.allConcepts.filter(concept => ids.has(concept.conceptId)))
   selected.value = []
 }
 

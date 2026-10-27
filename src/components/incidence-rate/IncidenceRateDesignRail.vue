@@ -8,7 +8,7 @@
       data-testid="ir-rail-panel-targets"
     >
       <header class="rail-section__header">
-        <span class="text-eyebrow">{{ t('facets.caption.targetCohorts', 'Target cohorts').value }}</span>
+        <span class="text-eyebrow">{{ t('facets.caption.targetCohorts').value }}</span>
         <AtlasButton
           variant="ghost"
           size="sm"
@@ -16,16 +16,17 @@
           :disabled="readonly"
           @click="openTarget = true"
         >
-          {{ t('common.add', 'Add').value }}
+          {{ t('common.add').value }}
         </AtlasButton>
       </header>
       <IncidenceRateCohortList
         :cohorts="targetCohorts"
         @remove="(id: number) => store.removeTargetCohortId(id)"
       />
-      <IncidenceRateCohortPicker
+      <CohortPickerDialog
         v-model="openTarget"
-        @select="(c: { id: number; name: string }) => store.addTargetCohortId(c.id, c.name)"
+        :excluded-ids="targetCohorts.map(cohort => cohort.id)"
+        @select="cohorts => cohorts.forEach(cohort => store.addTargetCohortId(cohort.id, cohort.name))"
       />
     </section>
 
@@ -34,7 +35,7 @@
       data-testid="ir-rail-panel-outcomes"
     >
       <header class="rail-section__header">
-        <span class="text-eyebrow">{{ t('columns.outcomes', 'Outcome cohorts').value }}</span>
+        <span class="text-eyebrow">{{ t('ir.editor.outcomeCohorts').value }}</span>
         <AtlasButton
           variant="ghost"
           size="sm"
@@ -42,16 +43,17 @@
           :disabled="readonly"
           @click="openOutcome = true"
         >
-          {{ t('common.add', 'Add').value }}
+          {{ t('common.add').value }}
         </AtlasButton>
       </header>
       <IncidenceRateCohortList
         :cohorts="outcomeCohorts"
         @remove="(id: number) => store.removeOutcomeCohortId(id)"
       />
-      <IncidenceRateCohortPicker
+      <CohortPickerDialog
         v-model="openOutcome"
-        @select="(c: { id: number; name: string }) => store.addOutcomeCohortId(c.id, c.name)"
+        :excluded-ids="outcomeCohorts.map(cohort => cohort.id)"
+        @select="cohorts => cohorts.forEach(cohort => store.addOutcomeCohortId(cohort.id, cohort.name))"
       />
     </section>
 
@@ -60,7 +62,7 @@
       data-testid="ir-rail-panel-tar"
     >
       <header class="rail-section__header">
-        <span class="text-eyebrow">{{ t('cohortDefinitions.appearance.timeAtRisk', 'Time at risk').value }}</span>
+        <span class="text-eyebrow">{{ t('cohortDefinitions.appearance.timeAtRisk').value }}</span>
       </header>
       <IncidenceRateTimeAtRiskEditor />
     </section>
@@ -70,7 +72,7 @@
       data-testid="ir-rail-panel-window"
     >
       <header class="rail-section__header">
-        <span class="text-eyebrow">{{ t('incidenceRate.studyWindow', 'Study window').value }}</span>
+        <span class="text-eyebrow">{{ t('incidenceRate.studyWindow').value }}</span>
       </header>
       <IncidenceRateStudyWindowEditor />
     </section>
@@ -80,7 +82,7 @@
       data-testid="ir-rail-panel-strata"
     >
       <header class="rail-section__header">
-        <span class="text-eyebrow">{{ t('ir.editor.stratifyCriteria', 'Stratify rules').value }}</span>
+        <span class="text-eyebrow">{{ t('ir.editor.stratifyCriteria').value }}</span>
         <span class="ir-rail__count">{{ strataCount }}</span>
       </header>
       <IncidenceRateStratifyRulesList
@@ -100,8 +102,8 @@ import { AtlasButton } from '@/components/ui'
 import { ref, computed } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { useIncidenceRateStore } from '@/stores/incidence-rate'
+import CohortPickerDialog from '@/components/shared/CohortPickerDialog.vue'
 import IncidenceRateCohortList from './IncidenceRateCohortList.vue'
-import IncidenceRateCohortPicker from './IncidenceRateCohortPicker.vue'
 import IncidenceRateTimeAtRiskEditor from './IncidenceRateTimeAtRiskEditor.vue'
 import IncidenceRateStudyWindowEditor from './IncidenceRateStudyWindowEditor.vue'
 import IncidenceRateStratifyRulesList from './IncidenceRateStratifyRulesList.vue'

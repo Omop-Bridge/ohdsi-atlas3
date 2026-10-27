@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { useI18n } from '@/composables/useI18n'
 import { ref, computed } from 'vue'
 import { logger } from '@/utils/logger'
 import { getConceptById, getConceptRecordCounts } from '@/services/concept-search.service'
@@ -25,6 +26,7 @@ interface CacheEntry {
 }
 
 export const useConceptDetailStore = defineStore('concept-detail', () => {
+  const { tv } = useI18n()
   const concept = ref<Concept | null>(null)
   const related = ref<RelatedConcept[]>([])
   const hierarchy = ref<RelatedConcept[]>([])
@@ -39,6 +41,7 @@ export const useConceptDetailStore = defineStore('concept-detail', () => {
   const drilldownErrorBySource = ref<Map<string, string>>(new Map())
 
   const cache = new Map<string, CacheEntry>()
+  let conceptLoadGeneration = 0
 
   const parents = computed(() =>
     hierarchy.value.filter((c) =>
@@ -92,10 +95,12 @@ export const useConceptDetailStore = defineStore('concept-detail', () => {
   }
 
   async function loadConcept(sourceKey: string, conceptId: number, force = false): Promise<void> {
+    const loadGeneration = ++conceptLoadGeneration
     const key = cacheKey(sourceKey, conceptId)
     const cached = cache.get(key)
     if (!force && cached && Date.now() - cached.loadedAt < CACHE_TTL_MS) {
       applyEntry(cached)
+      isLoading.value = false
       return
     }
 
@@ -114,15 +119,19 @@ export const useConceptDetailStore = defineStore('concept-detail', () => {
         ]
       )
 
+      // A concept click starts another root load immediately. Keep this
+      // request's result only when it still belongs to the latest selection.
+      if (loadGeneration !== conceptLoadGeneration) return
+
       if (conceptResult.status === 'rejected') {
         logger.error('ConceptDetail', `loadConcept failed for ${key}`, conceptResult.reason)
-        error.value = 'Failed to load concept'
+        error.value = tv('conceptDetail.errors.loadFailed')
         return
       }
 
       const c = conceptResult.value
       if (!c) {
-        error.value = 'Concept not found'
+        error.value = tv('conceptDetail.errors.notFound')
         concept.value = null
         related.value = []
         hierarchy.value = []
@@ -162,10 +171,12 @@ export const useConceptDetailStore = defineStore('concept-detail', () => {
     } catch (e) {
       // Callers invoke loadConcept from onMounted/watch without a .catch, so it
       // must never reject: anything unexpected degrades to the fatal error.
-      logger.error('ConceptDetail', `loadConcept failed for ${key}`, e)
-      error.value = 'Failed to load concept'
+      if (loadGeneration === conceptLoadGeneration) {
+        logger.error('ConceptDetail', `loadConcept failed for ${key}`, e)
+        error.value = tv('conceptDetail.errors.loadFailed')
+      }
     } finally {
-      isLoading.value = false
+      if (loadGeneration === conceptLoadGeneration) isLoading.value = false
     }
   }
 

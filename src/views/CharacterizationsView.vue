@@ -5,31 +5,30 @@
     @clear-error="store.clearError()"
   >
     <template #actions>
-      <AtlasTextField
-        :model-value="searchInput"
-        :label="t('datatable.language.searchPlaceholder', 'Search characterizations…').value"
-        prepend-icon="mdi-magnify"
-        variant="outlined"
-        hide-details
-        clearable
-        class="characterizations-view__search"
-        data-testid="characterizations-search"
-        @update:model-value="(v: string | number) => handleSearchInput(v != null ? String(v) : null)"
+      <ConceptSetFilters
+        :filters="store.filters"
+        :available-authors="store.availableAuthors"
+        :available-tags="store.availableTags"
+        :active-filter-count="store.activeFilterCount"
+        :search-placeholder="t('datatable.language.searchPlaceholder').value"
+        search-test-id="characterizations-search"
+        @update:filters="store.setFilters"
+        @clear="store.clearFilters"
       />
     </template>
 
     <template #primary-action>
       <AtlasButton
         icon="mdi-plus"
-        :aria-label="t('cc.new', 'New Characterization').value"
+        :aria-label="t('cc.newCharacterization').value"
         data-testid="characterizations-create"
         :disabled="!canCreate"
         @click="handleCreate"
       >
-        {{ t('home.newEntityNames.characterization', 'New characterization') }}
+        {{ t('home.newEntityNames.characterization') }}
       </AtlasButton>
       <EntityImportButton
-        :label="t('common.import', 'Import').value"
+        :label="t('common.import').value"
         testid="characterizations-import"
         :disabled="!canCreate"
         :import-design="importDesign"
@@ -39,25 +38,21 @@
     </template>
 
     <AnalysisDataTable
+      v-model:sort-by="sortBy"
       :headers="headers"
       :items="paginatedCharacterizations"
       :loading="loading"
       :items-per-page="itemsPerPage"
-      :empty-text="t('common.noData', 'No characterizations yet.').value"
+      :empty-text="t('cc.list.empty').value"
       testid="characterizations-table"
       :can-copy-item="item => canCopy && !!item.id"
       :can-delete-item="item => entityAccess.canDelete(item.id)"
+      :selected-tags="store.filters.selectedTags"
       @open="handleOpen"
       @copy="handleCopy"
       @delete="handleDeleteClick"
-    >
-      <template #[`item.cohorts`]="{ item }">
-        {{ item.cohorts?.length ?? 0 }}
-      </template>
-      <template #[`item.featureAnalyses`]="{ item }">
-        {{ item.featureAnalyses?.length ?? 0 }}
-      </template>
-    </AnalysisDataTable>
+      @tag-click="store.toggleTagFilterSelection"
+    />
 
     <template
       v-if="!loading && totalItems > itemsPerPage"
@@ -68,7 +63,7 @@
         :disabled="!canGoPrevious"
         @click="previousPage"
       >
-        {{ t('datatable.language.paginate.previous', 'Previous') }}
+        {{ t('datatable.language.paginate.previous') }}
       </AtlasButton>
       <span class="characterizations-view__range">{{ rangeDisplay }}</span>
       <AtlasButton
@@ -76,7 +71,7 @@
         :disabled="!canGoNext"
         @click="nextPage"
       >
-        {{ t('configuration.userImport.wizard.buttons.next', 'Next') }}
+        {{ t('configuration.userImport.wizard.buttons.next') }}
       </AtlasButton>
     </template>
   </AnalysisListLayout>
@@ -84,7 +79,7 @@
   <AtlasDialog
     v-model="showDeleteDialog"
     eyebrow="CONFIRM"
-    :title="t('common.delete', 'Delete').value"
+    :title="t('common.delete').value"
     max-width="500"
     @close="showDeleteDialog = false"
   >
@@ -94,21 +89,21 @@
         variant="ghost"
         @click="showDeleteDialog = false"
       >
-        {{ t('common.cancel', 'Cancel') }}
+        {{ t('common.cancel') }}
       </AtlasButton>
       <AtlasButton
         variant="danger"
         :loading="deleting"
         @click="confirmDelete"
       >
-        {{ t('common.delete', 'Delete') }}
+        {{ t('common.delete') }}
       </AtlasButton>
     </template>
   </AtlasDialog>
 </template>
 
 <script setup lang="ts">
-import { AtlasButton, AtlasDialog, AtlasTextField } from '@/components/ui'
+import { AtlasButton, AtlasDialog } from '@/components/ui'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
@@ -121,9 +116,12 @@ import { logger } from '@/utils/logger'
 import type { CharacterizationListItem } from '@/models/characterization.types'
 import AnalysisListLayout from '@/components/analysis/AnalysisListLayout.vue'
 import AnalysisDataTable from '@/components/analysis/AnalysisDataTable.vue'
+import ConceptSetFilters from '@/components/concepts/ConceptSetFilters.vue'
 import EntityImportButton from '@/components/shared/EntityImportButton.vue'
 import { importCharacterization } from '@/services/characterization.service'
 import { useNotifications } from '@/stores/notifications'
+
+type SortItem = { key: string; order: 'asc' | 'desc' }
 
 const router = useRouter()
 const { t } = useI18n()
@@ -138,38 +136,57 @@ const notify = useNotifications()
 const {
   loading,
   error,
-  paginatedCharacterizations,
+  filteredCharacterizations,
   totalItems,
+  page,
   itemsPerPage,
   canGoPrevious,
   canGoNext,
   rangeDisplay,
   nextPage,
   previousPage,
-  setFilter,
   refresh,
 } = useCharacterizations()
 
-const searchInput = ref<string>('')
+const sortBy = ref<SortItem[]>([{ key: 'modifiedDate', order: 'desc' }])
+
+function sortValue(item: CharacterizationListItem, key: string): string | number {
+  const value = item[key as keyof CharacterizationListItem]
+  if (key === 'createdBy' && value && typeof value === 'object') {
+    const user = value as { name?: string; login?: string; id?: number }
+    return (user.name ?? user.login ?? user.id ?? '').toString().toLowerCase()
+  }
+  if (typeof value === 'string') return value.toLowerCase()
+  return typeof value === 'number' ? value : ''
+}
+
+const sortedCharacterizations = computed(() => {
+  const activeSort = sortBy.value[0]
+  if (!activeSort) return filteredCharacterizations.value
+
+  const direction = activeSort.order === 'asc' ? 1 : -1
+  return [...filteredCharacterizations.value].sort((left, right) => {
+    const leftValue = sortValue(left, activeSort.key)
+    const rightValue = sortValue(right, activeSort.key)
+    if (leftValue === rightValue) return 0
+    return leftValue > rightValue ? direction : -direction
+  })
+})
+
+const paginatedCharacterizations = computed(() => {
+  const start = (page.value - 1) * itemsPerPage.value
+  return sortedCharacterizations.value.slice(start, start + itemsPerPage.value)
+})
 
 const headers = computed(() => [
-  { title: t('columns.id', 'ID').value, key: 'id' },
-  { title: t('columns.name', 'Name').value, key: 'name' },
-  { title: t('columns.description', 'Description').value, key: 'description' },
-  {
-    title: t('cc.viewEdit.results.filters.cohorts', 'Cohorts').value,
-    key: 'cohorts',
-    sortable: false,
-  },
-  {
-    title: t('cc.tabs.featureAnalyses.title', 'Feature Analyses').value,
-    key: 'featureAnalyses',
-    sortable: false,
-  },
-  { title: t('columns.createdBy', 'Created By').value, key: 'createdBy' },
-  { title: t('columns.created', 'Created').value, key: 'createdDate' },
-  { title: t('columns.updated', 'Updated').value, key: 'modifiedDate' },
-  { title: t('columns.actions', 'Actions').value, key: 'actions', sortable: false },
+  { title: t('columns.id').value, key: 'id' },
+  { title: t('columns.name').value, key: 'name' },
+  { title: t('columns.description').value, key: 'description' },
+  { title: t('common.tags').value, key: 'tags', sortable: false },
+  { title: t('columns.createdBy').value, key: 'createdBy' },
+  { title: t('columns.created').value, key: 'createdDate' },
+  { title: t('columns.updated').value, key: 'modifiedDate' },
+  { title: t('columns.actions').value, key: 'actions', sortable: false },
 ])
 
 const showDeleteDialog = ref(false)
@@ -184,12 +201,6 @@ const deleteMessage = computed(() => {
     { name: selectedCC.value.name }
   ).value
 })
-
-function handleSearchInput(value: string | null) {
-  const next = value ?? ''
-  searchInput.value = next
-  setFilter(next)
-}
 
 function handleCreate() {
   router.push('/characterizations/new')

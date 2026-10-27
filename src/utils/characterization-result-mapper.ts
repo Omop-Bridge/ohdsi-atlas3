@@ -6,15 +6,18 @@
  * `DistributionStat[]` rows, grouping by `(analysisId, covariateId)` so
  * multiple cohorts/strata for the same covariate collapse into one row.
  *
- * Unlike Atlas 2.15's full `BaseStatConverter` family, this mapper aims
- * only at the data the new viewer needs to display rows — temporal /
- * annual breakdowns are intentionally ignored at this layer (Phase 5
- * defers temporal visualisations).
+ * Prevalence items may carry `temporal` (daily windows) and `temporalAnnual`
+ * series. WebAPI attaches them per cohort / analysis / covariate, ignoring
+ * strata, so they are kept once per cohort in `temporalByCohort`.
  */
 import type {
+  CharacterizationResultReport,
   DistributionStat,
   LinkedCohort,
   PrevalenceStat,
+  StrataCounts,
+  TemporalAnnualItem,
+  TemporalItem,
 } from '@/models/characterization.types'
 import type { FeatureAnalysisType } from '@/models/feature-analysis.types'
 import { logger } from '@/utils/logger'
@@ -26,6 +29,33 @@ function humanizeCamelCase(s: string): string {
 
 /** Default stratum key used when a row is not stratified. */
 export const DEFAULT_STRATA_KEY = 'overall'
+
+/** WebAPI's strata id for the Overall (unstratified) results. */
+const OVERALL_STRATA_ID = '0'
+
+/**
+ * The N for one cohort in one partition, or undefined when WebAPI did not
+ * report it. Rows key Overall as `DEFAULT_STRATA_KEY` or "0"; the counts use "0".
+ */
+export function strataCount(
+  counts: StrataCounts | null | undefined,
+  cohortId: number | string,
+  partitionKey: string = DEFAULT_STRATA_KEY,
+): number | undefined {
+  const strataId = partitionKey === DEFAULT_STRATA_KEY ? OVERALL_STRATA_ID : partitionKey
+  const n = counts?.[String(cohortId)]?.[strataId]
+  return typeof n === 'number' && Number.isFinite(n) ? n : undefined
+}
+
+/** Overall N per cohort (cohortId -> N), for the cohorts WebAPI reported. */
+export function overallCohortSizes(counts: StrataCounts | null | undefined): Record<string, number> {
+  const sizes: Record<string, number> = {}
+  for (const cohortId of Object.keys(counts ?? {})) {
+    const n = strataCount(counts, cohortId)
+    if (n !== undefined) sizes[cohortId] = n
+  }
+  return sizes
+}
 
 /** Result type discriminator returned alongside the typed rows. */
 export type CharacterizationStatType = 'PREVALENCE' | 'DISTRIBUTION'
@@ -50,6 +80,7 @@ interface RawRow {
   cohortName?: string
   strataId?: number | string
   strataName?: string
+  diff?: number
   resultType?: string
   // Prevalence fields
   count?: number
@@ -64,6 +95,9 @@ interface RawRow {
   p75?: number
   p90?: number
   max?: number
+  // Temporal series (non-comparative preset prevalence items only)
+  temporal?: unknown
+  temporalAnnual?: unknown
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -87,6 +121,7 @@ function expandComparative(value: Record<string, unknown>): RawRow[] {
     faType: value.faType as RawRow['faType'],
     strataId: value.strataId as number | string | undefined,
     strataName: value.strataName as string | undefined,
+    diff: value.diff as number | undefined,
   }
   const rows: RawRow[] = []
   const target: RawRow = {
@@ -193,6 +228,46 @@ function ensureCohort(cohorts: LinkedCohort[], row: RawRow): void {
   cohorts.push({ id: row.cohortId, name: row.cohortName ?? `Cohort ${row.cohortId}` })
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function temporalItems(value: unknown): TemporalItem[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter(isRecord)
+    .filter(item => isFiniteNumber(item.startDay) && isFiniteNumber(item.endDay))
+    .map(item => ({
+      startDay: item.startDay as number,
+      endDay: item.endDay as number,
+      count: isFiniteNumber(item.count) ? item.count : 0,
+      avg: isFiniteNumber(item.avg) ? item.avg : 0,
+    }))
+    .sort((a, b) => a.startDay - b.startDay || a.endDay - b.endDay)
+}
+
+function temporalAnnualItems(value: unknown): TemporalAnnualItem[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter(isRecord)
+    .filter(item => isFiniteNumber(item.year))
+    .map(item => ({
+      year: item.year as number,
+      count: isFiniteNumber(item.count) ? item.count : 0,
+      avg: isFiniteNumber(item.avg) ? item.avg : 0,
+    }))
+    .sort((a, b) => a.year - b.year)
+}
+
+function addTemporal(stat: PrevalenceStat, cohort: string, row: RawRow): void {
+  if (stat.temporalByCohort?.[cohort]) return
+  const temporal = temporalItems(row.temporal)
+  const temporalAnnual = temporalAnnualItems(row.temporalAnnual)
+  if (temporal.length === 0 && temporalAnnual.length === 0) return
+  stat.temporalByCohort ??= {}
+  stat.temporalByCohort[cohort] = { temporal, temporalAnnual }
+}
+
 function pickCovariateName(row: RawRow): string {
   const short = row.covariateShortName?.trim()
   if (short) return short
@@ -210,8 +285,10 @@ function newPrevalenceStat(row: RawRow): PrevalenceStat {
     domainId: row.domainId,
     faType: row.faType,
     cohorts: [],
+    strataNames: {},
     count: {},
     pct: {},
+    stdDiffByStrata: {},
   }
 }
 
@@ -226,6 +303,7 @@ function newDistributionStat(row: RawRow): DistributionStat {
     domainId: row.domainId,
     faType: row.faType,
     cohorts: [],
+    strataNames: {},
     avg: {},
     stdDev: {},
     min: {},
@@ -301,8 +379,14 @@ export function mapCharacterizationResults(raw: unknown[]): MappedCharacterizati
           prevalenceMap.set(groupKey, stat)
         }
         ensureCohort(stat.cohorts, row)
+        stat.strataNames[sKey] = row.strataName ?? sKey
         setNested(stat.count, sKey, cKey, row.count)
         setNested(stat.pct, sKey, cKey, row.pct)
+        addTemporal(stat, cKey, row)
+        if (typeof row.diff === 'number') {
+          stat.stdDiffByStrata ??= {}
+          stat.stdDiffByStrata[sKey] = row.diff
+        }
       } else {
         let stat = distributionMap.get(groupKey)
         if (!stat) {
@@ -310,6 +394,7 @@ export function mapCharacterizationResults(raw: unknown[]): MappedCharacterizati
           distributionMap.set(groupKey, stat)
         }
         ensureCohort(stat.cohorts, row)
+        stat.strataNames[sKey] = row.strataName ?? sKey
         setNested(stat.avg, sKey, cKey, row.avg)
         setNested(stat.stdDev, sKey, cKey, row.stdDev)
         setNested(stat.min, sKey, cKey, row.min)
@@ -360,4 +445,70 @@ export function mapCharacterizationResults(raw: unknown[]): MappedCharacterizati
     prevalence: Array.from(prevalenceMap.values()),
     distribution: Array.from(distributionMap.values()),
   }
+}
+
+export interface MappedCharacterizationReport {
+  report: CharacterizationResultReport
+  cohorts: LinkedCohort[]
+  prevalence: PrevalenceStat[]
+  distribution: DistributionStat[]
+}
+
+/**
+ * Map one WebAPI report without losing its report-level cohort metadata.
+ * Missing prevalence values are materialized as zero so every subgroup and
+ * cohort table shares the same covariate grid, matching Atlas 2.x behavior.
+ */
+export function mapCharacterizationResultReport(
+  report: CharacterizationResultReport
+): MappedCharacterizationReport {
+  const cohorts = report.cohorts.map(({ cohortId, cohortName }) => ({ id: cohortId, name: cohortName }))
+  const raw = report.items.flatMap(item => {
+    if (!isRecord(item)) return []
+    return [{
+      ...item,
+      analysisId: item.analysisId ?? report.analysisId,
+      analysisName: item.analysisName ?? report.analysisName,
+      resultType: item.resultType ?? report.resultType,
+      faType: item.faType ?? report.faType,
+    }]
+  })
+  const mapped = mapCharacterizationResults(raw)
+  const prevalenceStrataNames = new Map<string, string>()
+  for (const row of mapped.prevalence) {
+    for (const [strataKey, strataName] of Object.entries(row.strataNames)) {
+      prevalenceStrataNames.set(strataKey, strataName)
+    }
+  }
+
+  for (const row of mapped.prevalence) {
+    row.cohorts = cohorts
+    for (const [strataKey, strataName] of prevalenceStrataNames) {
+      row.strataNames[strataKey] ??= strataName
+      row.count[strataKey] ??= {}
+      row.pct[strataKey] ??= {}
+      for (const cohort of cohorts) {
+        const cohortKey = String(cohort.id)
+        row.count[strataKey][cohortKey] ??= 0
+        row.pct[strataKey][cohortKey] ??= 0
+      }
+    }
+    if (cohorts.length === 2) {
+      const stratumKey = Object.keys(row.pct).includes(DEFAULT_STRATA_KEY)
+        ? DEFAULT_STRATA_KEY
+        : Object.keys(row.pct)[0]
+      if (stratumKey) {
+        row.stdDiff = computeBinaryStdDiff(
+          row.pct[stratumKey]?.[String(cohorts[0]?.id)],
+          row.pct[stratumKey]?.[String(cohorts[1]?.id)]
+        )
+      }
+    }
+  }
+
+  for (const row of mapped.distribution) {
+    row.cohorts = cohorts
+  }
+
+  return { report, cohorts, ...mapped }
 }

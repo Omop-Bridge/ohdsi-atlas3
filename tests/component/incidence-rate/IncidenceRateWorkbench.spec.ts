@@ -2,10 +2,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { setActivePinia, createPinia } from 'pinia'
-import { vuetify, pristinePinia } from './_test-helpers'
 import IncidenceRateWorkbench from '@/components/incidence-rate/IncidenceRateWorkbench.vue'
 import { useIncidenceRateStore } from '@/stores/incidence-rate'
 import { generateIncidenceRate, cancelIncidenceRateGeneration, getIncidenceRateReport } from '@/services/incidence-rate.service'
+import { tr } from '../../helpers/i18n-mock'
+import { vuetify, pristinePinia } from './_test-helpers'
+
+vi.mock('@/composables/useI18n', async () => {
+  const { mockUseI18n } = await import('../../helpers/i18n-mock')
+  return mockUseI18n
+})
 
 const { mockBuildCsvExport } = vi.hoisted(() => ({
   mockBuildCsvExport: vi.fn(),
@@ -31,7 +37,6 @@ vi.mock('@/components/incidence-rate/incidence-rate-workbench-state', async impo
     buildCsvExport: mockBuildCsvExport,
   }
 })
-
 
 vi.mock('@/stores/datasources', () => ({
   useDataSourcesStore: () => ({ sources: [], isLoading: false, fetchDataSources: vi.fn() }),
@@ -66,7 +71,13 @@ describe('IncidenceRateWorkbench', () => {
   function loadedStore() {
     const store = useIncidenceRateStore()
     store.createNewIR()
-    if (store.currentIR) store.currentIR.id = 42
+    if (store.currentIR) {
+      store.currentIR.id = 42
+      store.updateMeta({ name: 'Test IR' })
+      store.addTargetCohortId(1, 'Target')
+      store.addOutcomeCohortId(2, 'Outcome')
+      store.markClean()
+    }
     return store
   }
 
@@ -87,6 +98,46 @@ describe('IncidenceRateWorkbench', () => {
     expect(w.find('[data-testid="ir-workbench-rail"]').exists()).toBe(true)
     expect(w.find('[data-testid="ir-workbench-canvas"]').exists()).toBe(true)
     expect(w.find('[data-testid="ir-workbench-insights"]').exists()).toBe(true)
+  })
+
+  it('disables Run when a validation-relevant design field becomes invalid', async () => {
+    const store = loadedStore()
+    const w = mount(IncidenceRateWorkbench, {
+      global: { plugins: [vuetify, router], stubs },
+    })
+    await flushPromises()
+
+    const runTable = w.findComponent({ name: 'DataSourceRunTable' })
+    expect(runTable.props('runDisabled')).toBe(false)
+
+    store.removeTargetCohortId(1)
+    store.markClean()
+    await flushPromises()
+
+    expect(runTable.props('runDisabled')).toBe(true)
+    expect(runTable.props('runDisabledReason')).toBe(tr('components.generation.fixErrors'))
+  })
+
+  it('shows validation messages from the warning indicator', async () => {
+    const store = loadedStore()
+    const w = mount(IncidenceRateWorkbench, {
+      global: { plugins: [vuetify, router], stubs },
+    })
+    await flushPromises()
+    expect(w.find('[data-testid="ir-validation-messages-toggle"]').exists()).toBe(false)
+
+    store.removeTargetCohortId(1)
+    store.markClean()
+    await flushPromises()
+
+    await w.get('[data-testid="ir-validation-messages-toggle"]').trigger('click')
+    expect(w.findComponent({ name: 'AtlasDialog' }).props('modelValue')).toBe(true)
+    expect(document.body.textContent).toContain('At least one target cohort is required')
+
+    store.addTargetCohortId(1, 'Target')
+    store.markClean()
+    await flushPromises()
+    expect(w.find('[data-testid="ir-validation-messages-toggle"]').exists()).toBe(false)
   })
 
   it('auto-selects the latest completed run when no ?run is set', async () => {
@@ -295,6 +346,28 @@ describe('IncidenceRateWorkbench', () => {
     expect(addSpy).toHaveBeenCalled()
     expect(w.find('[data-testid="ir-workbench-rail"]').exists()).toBe(true)
     expect(w.findComponent({ name: 'IncidenceRateStratifyInspector' }).props('modelValue')).toBe(true)
+  })
+
+  it('commits an applied inspector draft through the stratify-rule store action', async () => {
+    const store = loadedStore()
+    store.addStratifyRule({ name: 'Original', expression: { Type: 'ALL', CriteriaList: [] } })
+    store.markClean()
+    const w = mount(IncidenceRateWorkbench, {
+      global: { plugins: [vuetify, router], stubs },
+    })
+    await flushPromises()
+
+    await w.findComponent({ name: 'IncidenceRateDesignRail' }).vm.$emit('strata:edit', 0)
+    await w.findComponent({ name: 'IncidenceRateStratifyInspector' }).vm.$emit('apply', {
+      name: 'Applied',
+      expression: { Type: 'ANY', CriteriaList: [] },
+    })
+
+    expect(store.currentIR!.expression.strata[0]).toMatchObject({
+      name: 'Applied',
+      expression: { Type: 'ANY' },
+    })
+    expect(store.isDirty).toBe(true)
   })
 
   it('routes history selections back to the run query', async () => {

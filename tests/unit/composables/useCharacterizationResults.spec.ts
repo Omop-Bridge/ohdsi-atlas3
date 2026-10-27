@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { isReactive } from 'vue'
 import { useCharacterizationResults } from '@/composables/useCharacterizationResults'
 
+vi.mock('@/composables/useI18n', async () => (await import('../../helpers/i18n-mock')).mockUseI18n)
 vi.mock('@/services/characterization.service', () => ({
   getCharacterizationExecution: vi.fn(),
   getCharacterizationResultCount: vi.fn(),
@@ -18,6 +20,18 @@ import { ApiError } from '@/services/api-error'
 const mockExec = vi.mocked(getCharacterizationExecution)
 const mockCount = vi.mocked(getCharacterizationResultCount)
 const mockResults = vi.mocked(getCharacterizationResults)
+
+function resultEnvelope(items: unknown[]) {
+  return {
+    reports: [{
+      analysisId: 1,
+      analysisName: 'A',
+      cohorts: [{ cohortId: 1, cohortName: 'C' }],
+      domainIds: [],
+      items,
+    }],
+  }
+}
 
 describe('useCharacterizationResults', () => {
   beforeEach(() => {
@@ -40,27 +54,66 @@ describe('useCharacterizationResults', () => {
       id: 7, sourceKey: 'CCAE', status: 'COMPLETED', startTime: 0, executionDuration: 0,
     } as any))
     mockCount.mockResolvedValue(success(123))
-    mockResults.mockResolvedValue(success([
+    mockResults.mockResolvedValue(success(resultEnvelope([
       { analysisId: 1, analysisName: 'A', covariateId: 11, covariateName: 'X',
         conceptId: 0, cohortId: 1, cohortName: 'C', count: 10, pct: 5,
         resultType: 'PREVALENCE' },
-    ]))
+    ])))
     const r = useCharacterizationResults()
     const ok = await r.load(7)
     expect(ok).toBe(true)
     expect(r.execution.value!.id).toBe(7)
     expect(r.resultCount.value).toBe(123)
     expect(r.prevalence.value).toHaveLength(1)
+    expect(isReactive(r.prevalence.value[0])).toBe(false)
     expect(r.error.value).toBeNull()
+  })
+
+  it('exposes the strata counts and clears them on reset', async () => {
+    mockExec.mockResolvedValue(success({ id: 7, sourceKey: 'CCAE', status: 'COMPLETED' } as any))
+    mockCount.mockResolvedValue(success(1))
+    mockResults.mockResolvedValue(success({
+      ...resultEnvelope([]),
+      strataCounts: { '1': { '0': 50, '4': 20 } },
+    }))
+    const r = useCharacterizationResults()
+
+    await r.load(7)
+    expect(r.strataCounts.value).toEqual({ '1': { '0': 50, '4': 20 } })
+
+    r.reset()
+    expect(r.strataCounts.value).toEqual({})
+  })
+
+  it('excludes the all-prevalence summary report from mapped results', async () => {
+    const item = {
+      analysisId: 1, analysisName: 'A', covariateId: 11, covariateName: 'X',
+      conceptId: 0, cohortId: 1, cohortName: 'C', count: 10, pct: 5,
+      resultType: 'PREVALENCE',
+    }
+    mockExec.mockResolvedValue(success({ id: 7, sourceKey: 'CCAE', status: 'COMPLETED' } as any))
+    mockCount.mockResolvedValue(success(1))
+    mockResults.mockResolvedValue(success({
+      reports: [
+        { analysisId: 1, analysisName: 'A', cohorts: [{ cohortId: 1, cohortName: 'C' }], domainIds: [], items: [item] },
+        { analysisId: null, analysisName: 'All prevalence covariates', cohorts: [{ cohortId: 1, cohortName: 'C' }], domainIds: [], items: [item] },
+      ],
+    }))
+
+    const r = useCharacterizationResults()
+    await r.load(7)
+
+    expect(r.prevalence.value).toHaveLength(1)
+    expect(r.prevalence.value[0]?.covariateId).toBe(11)
   })
 
   it('clears stale results when load is called for a new id', async () => {
     mockExec.mockResolvedValueOnce(success({ id: 7, sourceKey: 'A', status: 'COMPLETED', startTime: 0, executionDuration: 0 } as any))
     mockCount.mockResolvedValueOnce(success(1))
-    mockResults.mockResolvedValueOnce(success([
+    mockResults.mockResolvedValueOnce(success(resultEnvelope([
       { analysisId: 1, analysisName: 'A', covariateId: 11, covariateName: 'X', conceptId: 0,
         cohortId: 1, cohortName: 'C', count: 10, pct: 5, resultType: 'PREVALENCE' },
-    ]))
+    ])))
     const r = useCharacterizationResults()
     await r.load(7)
     expect(r.prevalence.value).toHaveLength(1)
@@ -71,10 +124,27 @@ describe('useCharacterizationResults', () => {
     void p
   })
 
+  it('stays loading when a superseded request finishes before the latest one', async () => {
+    let resolveFirst: (value: Awaited<ReturnType<typeof getCharacterizationExecution>>) => void = () => {}
+    mockExec
+      .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve }))
+      .mockImplementationOnce(() => new Promise(() => {}))
+    mockCount.mockResolvedValue(success(0))
+    mockResults.mockResolvedValue(success(resultEnvelope([])))
+    const r = useCharacterizationResults()
+
+    const first = r.load(7)
+    void r.load(8)
+    resolveFirst(success({ id: 7, sourceKey: 'A', status: 'COMPLETED', startTime: 0, executionDuration: 0 } as any))
+    await first
+
+    expect(r.loading.value).toBe(true)
+  })
+
   it('records error on failure', async () => {
     mockExec.mockResolvedValue(failure(new ApiError('boom', 0, null)))
     mockCount.mockResolvedValue(success(0))
-    mockResults.mockResolvedValue(success([]))
+    mockResults.mockResolvedValue(success(resultEnvelope([])))
     const r = useCharacterizationResults()
     const ok = await r.load(9)
     expect(ok).toBe(false)

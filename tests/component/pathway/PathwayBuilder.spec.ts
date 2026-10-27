@@ -7,13 +7,12 @@ import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import PathwayBuilder from '@/components/pathway/PathwayBuilder.vue'
 import { usePathwayStore } from '@/stores/pathway'
+import { tr } from '../../helpers/i18n-mock'
 
 const vuetify = createVuetify({ components, directives })
 
 const builderMocks = vi.hoisted(() => ({
   save: vi.fn(),
-  copy: vi.fn(),
-  remove: vi.fn(),
   feedback: { value: null as { message: string; color: 'success' | 'error' | 'info' } | null },
 }))
 
@@ -32,8 +31,6 @@ const accessMocks = vi.hoisted(() => ({
 vi.mock('@/composables/usePathwayBuilder', () => ({
   usePathwayBuilder: () => ({
     save: builderMocks.save,
-    copy: builderMocks.copy,
-    remove: builderMocks.remove,
     feedback: builderMocks.feedback,
   }),
 }))
@@ -92,7 +89,7 @@ describe('PathwayBuilder', () => {
         stubs,
       },
     })
-    expect(w.text()).toMatch(/No pathway loaded/i)
+    expect(w.text()).toContain(tr('pathways.editor.noPathwayLoaded'))
   })
 
   it('renders the workbench when a pathway is loaded', async () => {
@@ -107,6 +104,20 @@ describe('PathwayBuilder', () => {
     expect(w.findComponent({ name: 'PathwayWorkbench' }).exists()).toBe(true)
   })
 
+  it('counts only directly assigned tags in the manage-tags badge', async () => {
+    const store = loadPathway()
+    store.currentPathway!.tags = [
+      { id: 17, name: 'test', groups: [] },
+      { id: 18, name: 'Some Tag', groups: [{ id: 17, name: 'test' }] },
+    ]
+    const w = mount(PathwayBuilder, {
+      global: { plugins: [vuetify, router], stubs },
+    })
+    await flushPromises()
+
+    expect(w.find('[data-testid="pathway-builder-tags-badge"] .v-badge__badge').text()).toBe('1')
+  })
+
   it('renders inline title and subtitle inputs from the current pathway metadata', async () => {
     loadPathway(42, 'Pathway 1', 'Short note')
     const w = mount(PathwayBuilder, {
@@ -117,17 +128,17 @@ describe('PathwayBuilder', () => {
     })
     await flushPromises()
 
-    expect((w.find('[data-testid="pathway-builder-name"]').element as HTMLInputElement).value).toBe('Pathway 1')
-    expect((w.find('[data-testid="pathway-builder-description"]').element as HTMLInputElement).value).toBe('Short note')
+    expect(w.find('[data-testid="pathway-builder-name"]').element.tagName).toBe('TEXTAREA')
+    expect(w.find('[data-testid="pathway-builder-description"]').element.tagName).toBe('TEXTAREA')
+    expect((w.find('[data-testid="pathway-builder-name"]').element as HTMLTextAreaElement).value).toBe('Pathway 1')
+    expect((w.find('[data-testid="pathway-builder-description"]').element as HTMLTextAreaElement).value).toBe('Short note')
     expect(w.findComponent({ name: 'AnalysisBuilderShell' }).props('subtitle')).toBe('#42 · Short note')
   })
 
-  it('routes back and forwards save/copy/delete actions to the builder composable', async () => {
+  it('routes back and forwards save actions while omitting list-level actions', async () => {
     loadPathway()
     const pushSpy = vi.spyOn(router, 'push')
     builderMocks.save.mockResolvedValue(true)
-    builderMocks.copy.mockResolvedValue(true)
-    builderMocks.remove.mockResolvedValue(true)
 
     const w = mount(PathwayBuilder, {
       global: {
@@ -140,19 +151,17 @@ describe('PathwayBuilder', () => {
     expect(w.get('[data-testid="pathway-builder-save"]').attributes('disabled')).toBeUndefined()
     await w.get('[data-testid="pathway-builder-cancel"]').trigger('click')
     await w.get('[data-testid="pathway-builder-save"]').trigger('click')
-    await w.get('[data-testid="pathway-builder-copy"]').trigger('click')
-    await w.get('[data-testid="pathway-builder-delete"]').trigger('click')
     await flushPromises()
 
     expect(pushSpy).toHaveBeenCalledWith('/analysis/pathways')
     expect(builderMocks.save).toHaveBeenCalled()
-    expect(builderMocks.copy).toHaveBeenCalled()
-    expect(builderMocks.remove).toHaveBeenCalled()
+    expect(w.find('[data-testid="pathway-builder-copy"]').exists()).toBe(false)
+    expect(w.find('[data-testid="pathway-builder-delete"]').exists()).toBe(false)
   })
 
-  it('opens the tags dialog and syncs updates back to the store', async () => {
+  it('persists tag changes when the dialog applies them', async () => {
     const store = loadPathway()
-    const syncSpy = vi.spyOn(store, 'syncTags').mockResolvedValue(undefined)
+    const syncSpy = vi.spyOn(store, 'syncTags').mockResolvedValue(true)
 
     const w = mount(PathwayBuilder, {
       global: {
@@ -165,7 +174,8 @@ describe('PathwayBuilder', () => {
     await w.get('[data-testid="pathway-builder-tags"]').trigger('click')
     const dialog = w.findComponent({ name: 'TagSelectionDialog' })
     expect(dialog.exists()).toBe(true)
-    await dialog.vm.$emit('update:selected-tags', [{ id: 1, name: 'trial' }])
+    const onApply = dialog.props('onApply') as (tags: Array<{ id: number; name: string }>) => Promise<boolean>
+    await expect(onApply([{ id: 1, name: 'trial' }])).resolves.toBe(true)
     expect(syncSpy).toHaveBeenCalledWith([{ id: 1, name: 'trial' }])
   })
 
@@ -184,6 +194,75 @@ describe('PathwayBuilder', () => {
     await flushPromises()
 
     expect(w.findComponent({ name: 'EntityAccessDialog' }).props('modelValue')).toBe(true)
+  })
+
+  it('returns early from export and import handlers when no design or file is available', async () => {
+    const w = mount(PathwayBuilder, {
+      global: {
+        plugins: [vuetify, router],
+        stubs,
+      },
+    })
+
+    await expect((w.vm as any).$.setupState.handleExport()).resolves.toBeUndefined()
+    await expect(
+      (w.vm as any).$.setupState.handleImportFileChange({ target: { files: [], value: 'x' } })
+    ).resolves.toBeUndefined()
+    expect(serviceMocks.exportPathway).not.toHaveBeenCalled()
+  })
+
+  it('surfaces import and export failures and clears dismissed feedback', async () => {
+    loadPathway(42, 'Failure case')
+    serviceMocks.exportPathway.mockRejectedValueOnce(new Error('export failed'))
+    serviceMocks.importPathway.mockRejectedValueOnce(new Error('import failed'))
+    const w = mount(PathwayBuilder, {
+      global: {
+        plugins: [vuetify, router],
+        stubs,
+      },
+    })
+    await flushPromises()
+
+    await (w.vm as any).$.setupState.handleExport()
+    expect(builderMocks.feedback.value).toMatchObject({ message: tr('commonErrors.exportFailed'), color: 'error' })
+
+    const file = { text: async () => JSON.stringify({ name: 'Imported' }) }
+    await (w.vm as any).$.setupState.handleImportFileChange({ target: { files: [file], value: '' } })
+    expect(builderMocks.feedback.value).toMatchObject({ message: tr('characterizations.editor.utilities.import.importError'), color: 'error' })
+
+    ;(w.vm as any).$.setupState.onSnackbarUpdate(false)
+    expect(builderMocks.feedback.value).toBeNull()
+  })
+
+  it('builds versions configuration and opens the import picker', async () => {
+    const store = loadPathway(42, 'Versioned pathway')
+    store.currentPathway!.createdBy = { name: 'Author' } as never
+    store.currentPathway!.createdDate = 0 as never
+    const clearPreviewSpy = vi.spyOn(store, 'clearPreviewVersion')
+    const w = mount(PathwayBuilder, {
+      global: {
+        plugins: [vuetify, router],
+        stubs,
+      },
+    })
+    await flushPromises()
+
+    const input = w.get('[data-testid="pathway-builder-import-input"]').element as HTMLInputElement
+    const clickSpy = vi.spyOn(input, 'click').mockImplementation(() => undefined)
+    const setupState = (w.vm as any).$.setupState
+    setupState.handleImportClick()
+    expect(clickSpy).toHaveBeenCalled()
+
+    const versionsConfig = setupState.versionsConfig
+    expect(versionsConfig).toMatchObject({ assetType: 'pathway-analysis', assetId: 42 })
+    expect(versionsConfig.currentVersion()).toMatchObject({
+      assetId: 42,
+      createdBy: { name: 'Author' },
+      createdDate: new Date(0).toISOString(),
+      displayVersion: 'Current',
+    })
+    versionsConfig.clearPreview()
+    expect(clearPreviewSpy).toHaveBeenCalled()
   })
 
   it('exports and imports pathway designs through the file handlers', async () => {

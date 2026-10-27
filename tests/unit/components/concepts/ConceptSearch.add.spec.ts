@@ -7,28 +7,17 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { setActivePinia, createPinia } from 'pinia'
+import { routeLocationKey } from 'vue-router'
 import ConceptSearch from '@/components/concepts/ConceptSearch.vue'
 import ConceptTable from '@/components/concepts/ConceptTable.vue'
 import { useConceptSetsStore } from '@/stores/concept-sets'
 import { AtlasSnackbar } from '@/components/ui'
 import type { Concept } from '@/models/concept-set.types'
 
-vi.mock('@/composables/useI18n', () => ({
-  useI18n: () => ({
-    // Mirror the real composable: interpolate {param} placeholders from the
-    // params object so tests exercise the actual formatted output.
-    t: (key: string, fallback: string, params?: Record<string, unknown>) => {
-      let text = fallback ?? key
-      if (params) {
-        for (const [k, v] of Object.entries(params)) {
-          text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v))
-        }
-      }
-      return { value: text }
-    },
-    tv: (key: string) => key,
-  }),
-}))
+vi.mock('@/composables/useI18n', async () => {
+  const { mockUseI18n } = await import('../../../helpers/i18n-mock')
+  return mockUseI18n
+})
 
 vi.mock('@/services/concept-search.service', () => ({
   searchConcepts: vi.fn().mockResolvedValue({ success: true, data: [] }),
@@ -66,9 +55,21 @@ function mountSearch() {
 describe('ConceptSearch — add to concept set', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
-  it('passes show-add-button to the results table', () => {
+  it('does not show the per-row Add button column in the results table', () => {
     const wrapper = mountSearch()
-    expect(wrapper.findComponent(ConceptTable).props('showAddButton')).toBe(true)
+    expect(wrapper.findComponent(ConceptTable).props('showAddButton')).toBe(false)
+  })
+
+  it('uses the first value when the route query is an array', () => {
+    const wrapper = mount(ConceptSearch, {
+      global: {
+        plugins: [vuetify],
+        stubs: { ConceptTable: true },
+        provide: { [routeLocationKey as unknown as symbol]: { query: { query: ['diabetes', 'x'] } } },
+      },
+    })
+
+    expect((wrapper.find('input').element as HTMLInputElement).value).toBe('diabetes')
   })
 
   it('first Add creates a new set, opens the editor, and adds the concept', async () => {

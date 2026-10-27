@@ -11,10 +11,10 @@
       flat
     >
       <v-card-title class="jobs-panel__header d-flex align-center justify-space-between">
-        <span class="jobs-panel-title">{{ t('jobs.title', 'Jobs').value }}</span>
+        <span class="jobs-panel-title">{{ t('jobs.title').value }}</span>
         <AtlasIconButton
           icon="mdi-close"
-          v-bind="{ ariaLabel: t('jobs.close', 'Close jobs panel').value }"
+          v-bind="{ ariaLabel: t('jobs.close').value }"
           variant="text"
           size="sm"
           @click="handleClose"
@@ -24,31 +24,21 @@
       <AtlasDivider />
 
       <v-card-text class="jobs-panel__content flex-grow-1 overflow-y-auto">
-        <JobsSection v-if="canSeeJobs" />
-        <AtlasAlert
-          v-else
-          severity="info"
-        >
-          {{ t('jobs.noAccess', "You don't have access to the jobs panel.").value }}
-        </AtlasAlert>
+        <JobsSection />
       </v-card-text>
     </v-card>
   </v-navigation-drawer>
 </template>
 
 <script setup lang="ts">
-import { AtlasAlert, AtlasDivider, AtlasIconButton } from '@/components/ui'
+import { AtlasDivider, AtlasIconButton } from '@/components/ui'
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useUIStore } from '@/stores/ui'
-import { usePermissions } from '@/composables/usePermissions'
 import { useI18n } from '@/composables/useI18n'
 import JobsSection from '@/components/config/JobsSection.vue'
 
 const uiStore = useUIStore()
-const { hasPermission } = usePermissions()
 const { t } = useI18n()
-
-const canSeeJobs = computed(() => hasPermission('job:execution:get'))
 
 const isOpen = computed({
   get: () => uiStore.jobsPanelOpen,

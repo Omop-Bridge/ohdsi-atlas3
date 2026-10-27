@@ -11,10 +11,12 @@ import {
   CharacterizationDefinitionSchema,
   CharacterizationListItemSchema,
   CharacterizationExecutionSchema,
+  GenerationResultsSchema,
   GenerationStatusSchema,
   type CharacterizationDefinition,
   type CharacterizationListItem,
   type CharacterizationExecution,
+  type GenerationResults,
 } from '@/models/characterization.types'
 import { z } from 'zod'
 import { normalizeCriteriaGroupForCirce } from '@/components/cohort-editor/normalize'
@@ -24,11 +26,11 @@ const CONTEXT = 'CharacterizationService'
 
 /**
  * List all characterizations.
- * Endpoint: GET /cohort-characterization?size=10000
+ * Endpoint: GET /cohort-characterization?size=1000000
  */
 export async function listCharacterizations(): Promise<ApiResult<CharacterizationListItem[]>> {
   return unwrap(async () => {
-    const data = await httpGet<unknown>('/cohort-characterization?size=10000')
+    const data = await httpGet<unknown>('/cohort-characterization?size=1000000')
     const list = unwrapList(data)
     return parseOrThrow(z.array(CharacterizationListItemSchema), list, 'Invalid response from /cohort-characterization')
   }, CONTEXT)
@@ -55,6 +57,8 @@ export async function getCharacterization(
 // placeholders for keying, which must be stripped before send so the backend
 // assigns real IDs.
 function serializeCharacterization(def: CharacterizationDefinition): unknown {
+  const { tags: _tags, ...definition } = def
+  void _tags
   const stratas = def.stratas.map((s) => {
     const criteria = s.criteria ? normalizeCriteriaGroupForCirce(s.criteria) : s.criteria
     const numeric = Number(s.id)
@@ -65,7 +69,21 @@ function serializeCharacterization(def: CharacterizationDefinition): unknown {
     void _id
     return { ...rest, criteria }
   })
-  return { ...def, stratas }
+  return { ...definition, stratas }
+}
+
+/** POST /cohort-characterization/{id}/tag with the raw tag id. */
+export async function assignCharacterizationTag(id: number, tagId: number): Promise<ApiResult<void>> {
+  return unwrap(async () => {
+    await httpPost(`/cohort-characterization/${id}/tag`, tagId)
+  }, CONTEXT)
+}
+
+/** DELETE /cohort-characterization/{id}/tag/{tagId}. */
+export async function unassignCharacterizationTag(id: number, tagId: number): Promise<ApiResult<void>> {
+  return unwrap(async () => {
+    await httpDelete(`/cohort-characterization/${id}/tag/${tagId}`)
+  }, CONTEXT)
 }
 
 /**
@@ -298,9 +316,14 @@ export async function cancelCharacterizationGeneration(
  */
 export async function getCharacterizationDesignSnapshot(
   generationId: number
-): Promise<ApiResult<unknown>> {
+): Promise<ApiResult<CharacterizationDefinition>> {
   return unwrap(async () => {
-    return await httpGet<unknown>(`/cohort-characterization/generation/${generationId}/design`)
+    const data = await httpGet<unknown>(`/cohort-characterization/generation/${generationId}/design`)
+    return parseOrThrow(
+      CharacterizationDefinitionSchema,
+      data,
+      `Invalid response from /cohort-characterization/generation/${generationId}/design`
+    ) as CharacterizationDefinition
   }, CONTEXT)
 }
 
@@ -331,47 +354,32 @@ export interface CharacterizationResultsBody {
   thresholdValuePct?: number
   analysisIds?: number[]
   cohortIds?: number[]
-  // The server accepts additional keys (e.g. `domainIds`, `summary`) and we
-  // pass them through unchanged. Result rows are validated as `unknown[]`
-  // here; conversion / typed mapping lands in the report-mapper layer.
-  [key: string]: unknown
+  domainIds?: string[]
+  showEmptyResults?: boolean
 }
 
 /**
- * Fetch result rows for a generation.
+ * Fetch structured result reports for a generation.
  * Endpoint: POST /cohort-characterization/generation/{generationId}/result
- *
- * Newer WebAPIs wrap rows as `{ reports: [{ analysisId, items: [...] }] }`;
- * older builds return a flat array. Flatten either shape so the mapper sees
- * a single list of rows.
  */
 export async function getCharacterizationResults(
   generationId: number,
   body: CharacterizationResultsBody
-): Promise<ApiResult<unknown[]>> {
+): Promise<ApiResult<GenerationResults>> {
   return unwrap(async () => {
     const data = await httpPostRead<unknown>(
       `/cohort-characterization/generation/${generationId}/result`,
       body
     )
-    if (Array.isArray(data)) return data
-
-    if (data && typeof data === 'object' && 'reports' in data) {
-      const reports = (data as { reports: unknown }).reports
-      if (Array.isArray(reports)) {
-        return reports.flatMap(report => {
-          if (!report || typeof report !== 'object') return []
-          const items = (report as { items?: unknown }).items
-          return Array.isArray(items) ? items : []
-        })
-      }
+    const parsed = GenerationResultsSchema.safeParse(data)
+    if (!parsed.success) {
+      throw new ApiError(
+        `Invalid response from POST /cohort-characterization/generation/${generationId}/result`,
+        0,
+        JSON.stringify(data)
+      )
     }
-
-    throw new ApiError(
-      `Invalid response from POST /cohort-characterization/generation/${generationId}/result`,
-      0,
-      JSON.stringify(data)
-    )
+    return parsed.data
   }, CONTEXT)
 }
 

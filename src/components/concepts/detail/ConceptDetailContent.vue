@@ -26,6 +26,10 @@ const props = defineProps<{
   onBack?: () => void
 }>()
 
+const emit = defineEmits<{
+  navigate: [conceptId: number]
+}>()
+
 const store = useConceptDetailStore()
 const { concept, isLoading, error, related, parents, children, recordCountsBySource, hierarchyError } =
   storeToRefs(store)
@@ -44,10 +48,10 @@ function onAddToConceptSet(c: Concept) {
   conceptSetsStore.addConceptToSet(c)
   const setName =
     conceptSetsStore.currentSet?.name ||
-    t('components.conceptSetBuilder.newConceptSet', 'New concept set').value
+    t('components.conceptSetBuilder.newConceptSet').value
   feedback.value = {
     open: true,
-    text: t('search.addedToSet', 'Added "{concept}" → {set}', {
+    text: t('search.addedToSet', {
       concept: c.conceptName,
       set: setName,
     }).value,
@@ -117,6 +121,7 @@ watch(() => [props.sourceKey, props.conceptId], load)
             :children="children"
             :source-key="props.sourceKey"
             :load-failed="!!hierarchyError"
+            @navigate="emit('navigate', $event)"
           />
         </div>
 

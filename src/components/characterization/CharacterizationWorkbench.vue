@@ -19,13 +19,13 @@
       <button
         class="rail-toggle"
         :title="railOpen
-          ? tv('components.characterizationWorkbench.hideDesignPanel', 'Hide design panel')
-          : tv('components.characterizationWorkbench.showDesignPanel', 'Show design panel')"
+          ? tv('components.workbench.hideDesignPanel')
+          : tv('components.workbench.showDesignPanel')"
         @click="railOpen = !railOpen"
       >
         {{ railOpen
-          ? '◂ ' + tv('components.characterizationWorkbench.hideAnalysisDesign', 'Hide Analysis Design')
-          : '▸ ' + tv('components.characterizationWorkbench.showAnalysisDesign', 'Show Analysis Design') }}
+          ? '◂ ' + tv('components.workbench.hideAnalysisDesign')
+          : '▸ ' + tv('components.workbench.showAnalysisDesign') }}
       </button>
       <DataSourceRunTable
         :sources="runTableSources"
@@ -43,15 +43,26 @@
 
       <template v-if="characterizationId">
         <CharacterizationCanvasToolbar
+          v-model:configure-open="configureOpen"
           :mode="viewMode"
           :active-run="activeRunSummary"
           :threshold="filters.threshold"
           :has-results="prevalence.length > 0 || distribution.length > 0"
           @update:mode="(m) => (viewMode = m)"
           @update:threshold="(v) => (filters.threshold = v)"
-          @open-configure="configureOpen = true"
           @export="onExport"
-        />
+        >
+          <template #configure-panel>
+            <ConfigureInspector
+              :open="true"
+              :config="config"
+              :cohort-count="cohorts.length"
+              :has-strata="hasStrata"
+              @update:config="(c) => (config = c)"
+              @close="configureOpen = false"
+            />
+          </template>
+        </CharacterizationCanvasToolbar>
 
         <CharacterizationRunMeta
           v-if="execution"
@@ -66,21 +77,43 @@
           :available-cohorts="availableCohortsForFilter"
           :selected-analysis-ids="filters.selectedAnalysisIds"
           :selected-domains="filters.selectedDomains"
-          :selected-cohort-id="filters.selectedCohortId"
+          :selected-cohort-ids="filters.selectedCohortIds"
           :search="filters.search"
           @update:search="(v) => (filters.search = v)"
           @update:selected-analysis-ids="(v) => (filters.selectedAnalysisIds = v)"
           @update:selected-domains="(v) => (filters.selectedDomains = v)"
-          @update:selected-cohort-id="(v) => (filters.selectedCohortId = v)"
+          @update:selected-cohort-ids="(v) => (filters.selectedCohortIds = v)"
         />
 
+        <div
+          v-if="resultsLoading"
+          class="char-workbench__results-loading"
+          role="status"
+          aria-live="polite"
+          data-testid="char-results-loading"
+        >
+          <AtlasProgressCircular
+            indeterminate
+            size="40"
+          />
+          <span>{{ tv('common.loadingWithDots') }}</span>
+        </div>
+
         <CharacterizationEmptyState
-          v-if="emptyVariant"
+          v-else-if="emptyVariant"
           :variant="emptyVariant"
           :error-message="emptyVariant === 'run-failed' || emptyVariant === 'results-error' ? errorMessage : undefined"
         />
 
         <template v-else>
+          <AtlasAlert
+            v-if="showTimeSeriesComparativeNote"
+            severity="info"
+            class="mb-4"
+            data-testid="char-results-time-series-note"
+          >
+            {{ tv('components.characterizationResults.timeSeriesComparativeNote') }}
+          </AtlasAlert>
           <CharacterizationTable1View
             v-if="viewMode === 'table1'"
             :prevalence="prevalence"
@@ -88,7 +121,7 @@
             :cohorts="cohorts"
             :config="config"
             :filters="filters"
-            :cohort-sizes="cohortSizes"
+            :cohort-sizes="reportedCohortSizes"
             @explore="onExplore"
           />
           <CharacterizationDashboardView
@@ -106,19 +139,11 @@
             :selected-analysis-ids="filters.selectedAnalysisIds"
             :selected-domains="filters.selectedDomains"
             :search="filters.search"
-            :selected-cohort-id="filters.selectedCohortId"
+            :selected-cohort-ids="filters.selectedCohortIds"
+            :strata-counts="strataCounts"
             @explore="onExplore"
           />
         </template>
-
-        <ConfigureInspector
-          :open="configureOpen"
-          :config="config"
-          :cohort-count="cohorts.length"
-          :has-strata="hasStrata"
-          @update:config="(c) => (config = c)"
-          @close="configureOpen = false"
-        />
       </template>
 
       <CharacterizationEmptyState
@@ -142,6 +167,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { AtlasAlert, AtlasProgressCircular } from '@/components/ui'
 import CharacterizationDesignRail from './CharacterizationDesignRail.vue'
 import CharacterizationCanvasToolbar from './CharacterizationCanvasToolbar.vue'
 import CharacterizationRunMeta from './CharacterizationRunMeta.vue'
@@ -164,7 +190,9 @@ import { useDataSourcesStore } from '@/stores/datasources'
 import { useCharacterizationResults } from '@/composables/useCharacterizationResults'
 import { isTerminalStatus } from '@/composables/useExecutionPolling'
 import { getCohortGenerationInfo } from '@/services/cohort-definition.service'
+import { getCharacterizationDesignSnapshot } from '@/services/characterization.service'
 import { logger } from '@/utils/logger'
+import { overallCohortSizes } from '@/utils/characterization-result-mapper'
 import {
   DEFAULT_TABLE1_CONFIG, DEFAULT_TABLE1_FILTERS,
   type CharacterizationDefinition,
@@ -179,8 +207,6 @@ import type { FeatureAnalysisListItem } from '@/models/feature-analysis.types'
 import { exportCharacterizationResults } from './characterization-export'
 import {
   resolveActiveRunSummary,
-  resolveAvailableCohortsForFilter,
-  resolveAvailableDomains,
   resolveCohorts,
   resolveEmptyVariant,
   resolveHasStrata,
@@ -210,7 +236,7 @@ const { tv } = useI18n()
 const store = useCharacterizationStore()
 const sourcesStore = useDataSourcesStore()
 const cohortSizes = ref<Record<string, number>>({})
-const { execution, prevalence, distribution, resultCount, error, load, reset } = useCharacterizationResults()
+const { execution, prevalence, distribution, strataCounts, resultCount, error, loading: resultsLoading, load, reset } = useCharacterizationResults()
 
 const railOpen = ref(!route.params.id)
 const viewMode = ref<ViewMode>('perAnalysis')
@@ -218,6 +244,7 @@ const config = ref<Table1Config>({ ...DEFAULT_TABLE1_CONFIG })
 const filters = ref<Table1Filters>({ ...DEFAULT_TABLE1_FILTERS })
 const configureOpen = ref<boolean>(false)
 const errorMessage = ref<string>('')
+const generationDesign = ref<CharacterizationDefinition | null>(null)
 
 const historyOpen = ref<boolean>(false)
 const historySourceKey = ref<string | null>(null)
@@ -262,21 +289,47 @@ const hasStrata = computed<boolean>(() => resolveHasStrata({
 }))
 
 const availableAnalyses = computed<{ id: number; name: string }[]>(() => {
+  if (generationDesign.value) {
+    return generationDesign.value.featureAnalyses.map(analysis => ({
+      id: analysis.id,
+      name: analysis.name ?? String(analysis.id),
+    }))
+  }
   const map = new Map<number, string>()
   for (const r of prevalence.value) map.set(r.analysisId, r.analysisName)
   for (const r of distribution.value) map.set(r.analysisId, r.analysisName)
   return Array.from(map.entries()).map(([id, name]) => ({ id, name }))
 })
 
-const availableDomains = computed<string[]>(() => resolveAvailableDomains({
-  prevalence: prevalence.value,
-  distribution: distribution.value,
-}))
+const availableDomains = computed<string[]>(() => {
+  if (generationDesign.value) {
+    const domains = new Set<string>()
+    for (const analysis of generationDesign.value.featureAnalyses) {
+      if (analysis.domain) domains.add(analysis.domain)
+    }
+    return Array.from(domains).sort()
+  }
+  const domains = new Set<string>()
+  for (const result of prevalence.value) if (result.domainId) domains.add(result.domainId)
+  for (const result of distribution.value) if (result.domainId) domains.add(result.domainId)
+  return Array.from(domains).sort()
+})
 
-const availableCohortsForFilter = computed<LinkedCohort[]>(() => resolveAvailableCohortsForFilter({
-  prevalence: prevalence.value,
-  distribution: distribution.value,
-}))
+const availableCohortsForFilter = computed<LinkedCohort[]>(() =>
+  generationDesign.value?.cohorts ?? props.modelValue.cohorts
+)
+
+// WebAPI only returns annual/temporal data with single-cohort reports, so with
+// two cohorts compared side by side the user has to narrow to one to see it.
+const showTimeSeriesComparativeNote = computed<boolean>(() => {
+  const selected = filters.value.selectedCohortIds
+  const shown = selected.length
+    ? cohorts.value.filter(cohort => selected.includes(cohort.id))
+    : cohorts.value
+  if (shown.length !== 2) return false
+  const design = generationDesign.value ?? props.modelValue
+  return design.featureAnalyses.some(fa => fa.includeAnnual || fa.includeTemporal)
+})
 
 const selectedExecutionId = computed<number | null>(() => resolveSelectedExecutionId(route.query?.run))
 
@@ -343,11 +396,54 @@ watch(
 )
 
 watch(
+  [
+    selectedExecutionId,
+    () => filters.value.selectedAnalysisIds,
+    () => filters.value.selectedDomains,
+    () => filters.value.selectedCohortIds,
+    () => filters.value.threshold,
+  ],
+  async ([id]) => {
+    if (id === null) { reset(); cohortSizes.value = {}; return }
+    await loadSelectedResults(id)
+  },
+  { immediate: true, deep: true },
+)
+
+async function loadSelectedResults(id: number): Promise<void> {
+  const ok = await load(id, {
+    analysisIds: filters.value.selectedAnalysisIds,
+    domainIds: filters.value.selectedDomains,
+    cohortIds: filters.value.selectedCohortIds,
+    thresholdValuePct: filters.value.threshold / 100,
+  })
+  errorMessage.value = ok ? '' : (error.value ?? '')
+}
+
+// `execution` is a snapshot taken when the results were loaded, while polling
+// updates `store.executions`. Reload once the selected run reaches a terminal
+// status so the pending state gives way to the results.
+const selectedPolledStatus = computed(() =>
+  store.executions.find(e => e.id === selectedExecutionId.value)?.status,
+)
+
+let terminalReloadFor: number | null = null
+
+watch([selectedPolledStatus, () => execution.value?.status], ([polledStatus, loadedStatus]) => {
+  const id = selectedExecutionId.value
+  if (id === null || !polledStatus || !isTerminalStatus(polledStatus)) return
+  if (!loadedStatus || isTerminalStatus(loadedStatus) || terminalReloadFor === id) return
+  terminalReloadFor = id
+  void loadSelectedResults(id)
+})
+
+watch(
   selectedExecutionId,
   async (id) => {
-    if (id === null) { reset(); cohortSizes.value = {}; return }
-    const ok = await load(id)
-    if (!ok) errorMessage.value = error.value ?? ''
+    generationDesign.value = null
+    if (id === null) return
+    const result = await getCharacterizationDesignSnapshot(id)
+    if (selectedExecutionId.value === id && result.success) generationDesign.value = result.data
   },
   { immediate: true },
 )
@@ -382,6 +478,13 @@ watch(
   { immediate: true },
 )
 
+// The run's own person counts (from WebAPI's strataCounts) describe the people
+// analysed, so they win over the cohort's current generation size.
+const reportedCohortSizes = computed<Record<string, number>>(() => ({
+  ...cohortSizes.value,
+  ...overallCohortSizes(strataCounts.value),
+}))
+
 onMounted(async () => {
   errorMessage.value = error.value ?? ''
   if (sourcesStore.sources.length === 0) {
@@ -400,7 +503,7 @@ async function handleRun(sourceKey: string): Promise<void> {
     if (exec) onRunStarted(exec)
   } catch (err) {
     logger.error('CharacterizationWorkbench', 'Run failed', err)
-    const msg = err instanceof Error ? err.message : tv('cc.fa.runError', 'Failed to start generation')
+    const msg = err instanceof Error ? err.message : tv('cc.fa.runError')
     emit('snackbar', msg, 'error')
   }
 }
@@ -414,7 +517,7 @@ async function handleCancel(sourceKey: string): Promise<void> {
     await store.cancelExecution(props.characterizationId, sourceKey, latest?.id)
   } catch (err) {
     logger.error('CharacterizationWorkbench', 'Cancel failed', err)
-    const msg = err instanceof Error ? err.message : tv('cc.fa.cancelError', 'Failed to cancel generation')
+    const msg = err instanceof Error ? err.message : tv('cc.fa.cancelError')
     emit('snackbar', msg, 'error')
   }
 }
@@ -450,7 +553,7 @@ function onExport(): void {
     cohorts: cohorts.value,
     config: config.value,
     filters: filters.value,
-    cohortSizes: cohortSizes.value,
+    cohortSizes: reportedCohortSizes.value,
     selectedExecutionId: selectedExecutionId.value,
   })
 }
@@ -459,7 +562,7 @@ function onExport(): void {
 <style scoped>
 .char-workbench {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 50% minmax(0, 1fr);
   background: rgb(var(--v-theme-surface));
   border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
   border-radius: 12px;
@@ -480,6 +583,16 @@ function onExport(): void {
 }
 .char-workbench--rail-collapsed {
   grid-template-columns: minmax(0, 1fr);
+}
+.char-workbench__results-loading {
+  align-items: center;
+  color: rgba(var(--v-theme-on-surface), 0.6);
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  gap: 12px;
+  justify-content: center;
+  padding: 64px 24px;
 }
 .rail-toggle {
   background: rgb(var(--v-theme-primary));

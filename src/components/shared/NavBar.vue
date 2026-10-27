@@ -40,7 +40,7 @@
       </template>
       <nav
         class="nav-bar__nav-wrapper"
-        :aria-label="t('components.navBar.mainNavigation', 'Main').value"
+        :aria-label="t('components.navBar.mainNavigation').value"
       >
         <!-- Full menu for larger screens -->
         <ul class="nav-bar__nav nav-bar__nav-list d-none d-md-flex">
@@ -77,7 +77,7 @@
                 <AtlasIcon start>
                   mdi-menu
                 </AtlasIcon>
-                {{ t('common.menu', 'Menu') }}
+                {{ t('common.menu') }}
               </AtlasButton>
             </template>
             <AtlasList>
@@ -113,7 +113,7 @@
           target="_blank"
           class="mr-4"
         >
-          {{ t('navigation.feedback', 'Feedback').value }}
+          {{ t('navigation.feedback').value }}
         </AtlasButton>
 
         <!-- Language Selector -->
@@ -126,39 +126,62 @@
         />
 
         <!-- Docs (user manual) -->
-        <AtlasIconButton
-          icon="mdi-book-open-page-variant-outline"
-          v-bind="{ ariaLabel: t('navigation.docs', 'User manual').value }"
-          variant="text"
-          size="sm"
-          data-testid="nav-docs"
-          @click="handleDocsClick"
-        />
+        <AtlasTooltip
+          :text="t('navigation.docs').value"
+          location="bottom"
+        >
+          <template #activator="{ props: tooltipProps }">
+            <AtlasIconButton
+              v-bind="tooltipProps"
+              icon="mdi-book-open-page-variant-outline"
+              :aria-label="t('navigation.docs').value"
+              variant="text"
+              size="sm"
+              data-testid="nav-docs"
+              @click="handleDocsClick"
+            />
+          </template>
+        </AtlasTooltip>
 
         <!-- Notifications bell + inbox -->
         <NotificationInbox />
 
         <!-- Jobs Panel Icon: separate side drawer, sits left of the cog. -->
-        <AtlasIconButton
-          v-if="hasJobsAccess"
-          icon="mdi-briefcase-clock-outline"
-          v-bind="{ ariaLabel: t('jobs.openPanel', 'Open jobs panel').value }"
-          variant="text"
-          size="sm"
-          data-testid="nav-jobs"
-          @click="handleJobsClick"
-        />
+        <AtlasTooltip
+          :text="t('jobs.openPanel').value"
+          location="bottom"
+        >
+          <template #activator="{ props: tooltipProps }">
+            <AtlasIconButton
+              v-bind="tooltipProps"
+              icon="mdi-briefcase-clock-outline"
+              :aria-label="t('jobs.openPanel').value"
+              variant="text"
+              size="sm"
+              data-testid="nav-jobs"
+              @click="handleJobsClick"
+            />
+          </template>
+        </AtlasTooltip>
 
         <!-- Configuration Panel Icon: hidden when user has no admin perms -->
-        <AtlasIconButton
+        <AtlasTooltip
           v-if="showConfigButton && hasAnyAdminAccess"
-          icon="mdi-cog"
-          v-bind="{ ariaLabel: t('config.accessibility.openPanel', 'Open configuration panel').value }"
-          variant="text"
-          size="sm"
-          data-testid="nav-config"
-          @click="handleConfigClick"
-        />
+          :text="t('config.accessibility.openPanel').value"
+          location="bottom"
+        >
+          <template #activator="{ props: tooltipProps }">
+            <AtlasIconButton
+              v-bind="tooltipProps"
+              icon="mdi-cog"
+              :aria-label="t('config.accessibility.openPanel').value"
+              variant="text"
+              size="sm"
+              data-testid="nav-config"
+              @click="handleConfigClick"
+            />
+          </template>
+        </AtlasTooltip>
 
         <!-- Authentication UI -->
         <div
@@ -237,7 +260,7 @@
 </template>
 
 <script setup lang="ts">
-import { AtlasButton, AtlasDivider, AtlasIcon, AtlasIconButton, AtlasList, AtlasListItem, AtlasMenu } from '@/components/ui'
+import { AtlasButton, AtlasDivider, AtlasIcon, AtlasIconButton, AtlasList, AtlasListItem, AtlasMenu, AtlasTooltip } from '@/components/ui'
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuth } from '@/composables/useAuth'
@@ -282,14 +305,13 @@ const { items: accountMenuItems } = usePluginMounts('account-menu')
 // Hide the cog icon entirely for users without any admin permission. Mirrors
 // the per-tab gating in ConfigPanel — if every section would be hidden, the
 // entry point shouldn't be visible at all. Jobs now has its own nav entry
-// (hasJobsAccess) and is no longer gating the cog. Plugin-contributed admin
-// tabs also keep the cog visible, even with no core admin permission.
+// Plugin-contributed admin tabs also keep the cog visible, even with no core
+// admin permission.
 const hasAnyAdminAccess = computed(
   () =>
     hasAnyPermission(['admin:cache', 'admin:source', 'admin:tags', 'admin:security']) ||
     adminTabMounts.value.length > 0
 )
-const hasJobsAccess = computed(() => hasAnyPermission(['job:execution:get']))
 
 // The brand navy logo measures 1.70:1 on the dark surface — effectively invisible.
 const themeStore = useThemeStore()
@@ -305,10 +327,10 @@ const showThemeToggle = ref(true)
 const feedbackUrl = ref('https://forms.office.com/r/2JzrYy1yDP')
 const logoNavigateTo = ref('/')
 
-const signInLabel = t('components.userBar.signin', 'Sign In')
-const signOutLabel = t('components.userBar.signout', 'Sign Out')
-const apiKeysLabel = t('components.userBar.apiKeys', 'API Keys')
-const logoAriaLabel = computed(() => t('a11y.logoHome', 'OHDSI ATLAS Home').value)
+const signInLabel = t('components.userBar.signin')
+const signOutLabel = t('components.userBar.signout')
+const apiKeysLabel = t('components.userBar.apiKeys')
+const logoAriaLabel = computed(() => t('a11y.logoHome').value)
 
 // Core navigation items (will be filtered based on plugin configuration)
 const coreNavigationItems: NavigationItem[] = [
@@ -372,22 +394,11 @@ function loadPluginMenuItems() {
 }
 
 function getNavTitle(key: string): string {
-  const defaults: Record<string, string> = {
-    'navigation.conceptsets': 'Concepts',
-    'navigation.cohortdefinitions': 'Cohorts',
-    'navigation.profiles': 'Profiles',
-    'navigation.datasources': 'Data Sources',
-    'navigation.analysis': 'Analysis',
-    'navigation.characterizations': 'Characterizations',
-    'navigation.featureAnalyses': 'Feature Analyses',
-    'navigation.pathways': 'Pathways',
-    'navigation.incidenceRates': 'Incidence Rates',
-  }
   // If key starts with a capital letter, it's likely a direct title (from plugin)
   if (key && key.length > 0 && key[0] && key[0] === key[0].toUpperCase()) {
     return key
   }
-  return t(key, defaults[key] || key).value
+  return t(key).value
 }
 
 const handleLogoClick = async () => {
@@ -533,6 +544,9 @@ onMounted(() => {
 
 <style scoped>
 .nav-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   width: 100%;
   height: 60px;
   background-color: rgb(var(--v-theme-surface));

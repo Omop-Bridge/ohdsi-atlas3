@@ -103,6 +103,12 @@
       @create-new="handleCreateNewConceptSet"
     />
 
+    <ConceptSearchDialog
+      v-model="conceptSearchOpen"
+      :domain-filter="conceptSearchDomainFilter"
+      @concepts-selected="onConceptsSelected"
+    />
+
     <ConceptSetEditor
       v-if="conceptSetsStore.editorOpen"
       :model-value="conceptSetsStore.editorOpen"
@@ -126,6 +132,8 @@ import { computed, ref, watch } from 'vue'
 import { AtlasAlert, AtlasButton, AtlasIconButton, AtlasList, AtlasListItem, AtlasMenu, AtlasTextField } from '@/components/ui'
 import ConceptSetEditor from '@/components/concepts/ConceptSetEditor.vue'
 import ConceptSetSelectionDialog from '@/components/cohort/ConceptSetSelectionDialog.vue'
+import ConceptSearchDialog from '@/components/cohort/ConceptSearchDialog.vue'
+import { useCriteriaConceptSearch } from '@/composables/useCriteriaConceptSearch'
 import DemographicCriteria from '@/components/circe/criteria/DemographicCriteria.vue'
 import { useConceptSetsStore } from '@/stores/concept-sets'
 import { useI18n } from '@/composables/useI18n'
@@ -155,19 +163,21 @@ const getRowKey = createObjectKeyGenerator()
 const conceptSetsStore = useConceptSetsStore()
 const showAddMenu = ref(false)
 
+const { conceptSearchOpen, conceptSearchDomainFilter, onConceptsSelected } = useCriteriaConceptSearch()
+
 const defaultAggregate = computed<FeatureAnalysisAggregate | null>(() => props.aggregates.find(aggregate => aggregate.isDefault) ?? null)
-const addCriteriaLabel = computed(() => t('featureAnalyses.editor.distribution.addCriteria', 'Add Criteria feature').value)
-const emptyLabel = computed(() => t('featureAnalyses.editor.distribution.empty', 'No criteria features yet.').value)
-const criteriaNameLabel = computed(() => t('cc.fa.criteriaName', 'Criteria name').value)
-const aggregateLabel = computed(() => t('cc.fa.aggregate', 'Aggregate').value)
-const deleteLabel = computed(() => t('common.delete', 'Delete').value)
-const demographicCriteriaLabel = computed(() => t('components.demographicCriteria.name', 'Demographic Criteria').value)
-const demographicCriteriaSubtitle = computed(() => t('featureAnalyses.editor.distribution.demographicSubtitle', 'Demographic criteria are not windowed').value)
+const addCriteriaLabel = computed(() => t('featureAnalyses.editor.distribution.addCriteria').value)
+const emptyLabel = computed(() => t('featureAnalyses.editor.distribution.empty').value)
+const criteriaNameLabel = computed(() => t('cc.fa.criteriaName').value)
+const aggregateLabel = computed(() => t('cc.fa.aggregate').value)
+const deleteLabel = computed(() => t('common.delete').value)
+const demographicCriteriaLabel = computed(() => t('components.demographicCriteria.name').value)
+const demographicCriteriaSubtitle = computed(() => t('featureAnalyses.editor.distribution.demographicSubtitle').value)
 
 const criteriaOptions = EDITABLE_CRITERIA_TYPES.map(type => ({
   value: type.key as EditableCriteriaKey,
   title: t(type.i18nKey, type.label).value,
-  subtitle: type.domains.length > 0 ? type.domains.join(', ') : t('common.allDomains', 'All domains').value,
+  subtitle: type.domains.length > 0 ? type.domains.join(', ') : t('common.allDomains').value,
 }))
 
 const conceptSetsStorePicker = useCirceConceptSetPicker({

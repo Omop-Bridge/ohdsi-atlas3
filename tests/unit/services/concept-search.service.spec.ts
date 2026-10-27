@@ -143,13 +143,13 @@ describe('ConceptSearchService', () => {
         text: () => Promise.resolve(JSON.stringify([])),
       })
 
-      await searchConcepts('TEST', 'diabetes', { domain: 'Condition' })
+      await searchConcepts('TEST', 'diabetes', { domain: ['Condition', 'Drug'] })
 
       expect(mockFetch).toHaveBeenCalledWith(
         expect.stringContaining('/vocabulary/TEST/search'),
         expect.objectContaining({
           method: 'POST',
-          body: expect.stringContaining('"DOMAIN_ID":["Condition"]'),
+          body: expect.stringContaining('"DOMAIN_ID":["Condition","Drug"]'),
         })
       )
     })
@@ -720,6 +720,36 @@ describe('ConceptSearchService', () => {
       expect(result.available).toBe(true)
       expect(result.concepts).toHaveLength(1)
       expect(result.concepts[0].relationships).toBeUndefined()
+    })
+
+    it('should accept the WebAPI RecommendedConcept shape, which omits validity dates and null fields', async () => {
+      const mockResponse = [
+        {
+          CONCEPT_ID: 1001,
+          CONCEPT_NAME: 'Recommended Without Dates',
+          STANDARD_CONCEPT_CAPTION: 'Unknown',
+          INVALID_REASON_CAPTION: 'Unknown',
+          CONCEPT_CODE: '1001',
+          DOMAIN_ID: 'Condition',
+          VOCABULARY_ID: 'SNOMED',
+          CONCEPT_CLASS_ID: 'Clinical Finding',
+          RELATIONSHIPS: ['Has ancestor of'],
+        },
+      ]
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(JSON.stringify(mockResponse)),
+      })
+
+      const result = await getRecommendedConcepts('TEST', [123])
+
+      expect(result.available).toBe(true)
+      expect(result.concepts).toHaveLength(1)
+      expect(result.concepts[0].conceptId).toBe(1001)
+      expect(result.concepts[0].relationships).toEqual(['Has ancestor of'])
+      expect(logger.error).not.toHaveBeenCalled()
     })
 
     it('should return available:false on HTTP 501 without throwing or logging error', async () => {

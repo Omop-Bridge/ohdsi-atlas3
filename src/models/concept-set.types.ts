@@ -4,6 +4,7 @@
  */
 import { z } from 'zod'
 import type { Tag } from '@/models/cohort.types'
+import { TagSchema } from '@/models/webapi.types'
 import { ConceptSchema as CirceConceptSchema } from '@/models/circe-types'
 
 // ============================================================================
@@ -51,6 +52,15 @@ export const ConceptSearchResponseSchema = z.array(ConceptSearchResponseItemSche
 
 export type ConceptSearchResponse = z.infer<typeof ConceptSearchResponseSchema>
 
+// WebAPI RecommendedConcept extends the circe Concept, which has no validity dates.
+export const RecommendedConceptSchema = ConceptSearchResponseItemSchema.extend({
+  VALID_START_DATE: z.number().optional(),
+  VALID_END_DATE: z.number().optional(),
+})
+export type RecommendedConcept = z.infer<typeof RecommendedConceptSchema>
+
+export const RecommendedConceptsResponseSchema = z.array(RecommendedConceptSchema)
+
 // ============================================================================
 // Concept Set Item (concept with configuration flags)
 // ============================================================================
@@ -67,6 +77,19 @@ export interface ConceptSetItem {
   isExcluded: boolean // Exclude from cohort criteria
   includeDescendants: boolean // Include child concepts in hierarchy
   includeMapped: boolean // Include mapped concepts from other vocabularies
+  missingFromVocabulary?: boolean
+}
+
+/**
+ * A concept the selected vocabulary source does not contain. Items flagged by
+ * the concept set loader carry `missingFromVocabulary`; items read back out of
+ * a cohort expression lose the flag but keep the empty name the loader gave
+ * them, so an unnamed item counts as missing too.
+ */
+export function isConceptMissing(item: Pick<ConceptSetItem, 'conceptName'> & {
+  missingFromVocabulary?: boolean
+}): boolean {
+  return !!item.missingFromVocabulary || !item.conceptName
 }
 
 export type ConceptAddFlags = Partial<
@@ -166,15 +189,7 @@ export const ConceptSetListItemSchema = z.object({
       }),
     ])
     .optional(),
-  tags: z
-    .array(
-      z.object({
-        id: z.number().optional(),
-        name: z.string(),
-        color: z.string().nullable().optional(),
-      })
-    )
-    .optional(),
+  tags: z.array(TagSchema).optional(),
 })
 
 export type ConceptSetListItem = z.infer<typeof ConceptSetListItemSchema>

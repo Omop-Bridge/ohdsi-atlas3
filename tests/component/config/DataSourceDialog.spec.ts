@@ -29,6 +29,7 @@ vi.mock('@/utils/logger', () => ({
 }))
 
 import DataSourceDialog from '@/components/config/DataSourceDialog.vue'
+import { tr } from '../../helpers/i18n-mock'
 
 const vuetify = createVuetify({ components, directives })
 global.ResizeObserver = vi.fn().mockImplementation(() => ({
@@ -61,17 +62,17 @@ const details = {
   sourceId: 42,
   sourceKey: 'CDM',
   sourceName: 'CDM Source',
-  sourceDialect: 'POSTGRESQL',
+  sourceDialect: 'postgresql',
   connectionString: 'jdbc:postgresql://localhost:5432/cdm',
-  daimons: [{ daimonType: 'CDM', tableQualifier: 'demo_cdm', priority: 0 }],
+  daimons: [{ daimonType: 'CDM', tableQualifier: 'demo_cdm', priority: 1 }],
 }
 
-async function mountDialog(sourceKey: string | null) {
+async function mountDialog(sourceKey: string | null, sourceId: number | null = null) {
   const pinia = createPinia()
   setActivePinia(pinia)
   const wrapper = mount(DataSourceDialog, {
     global: { plugins: [vuetify, pinia], stubs: makeStubs() },
-    props: { modelValue: false, sourceKey },
+    props: { modelValue: false, sourceKey, sourceId },
   })
   // The dialog loads the source on open, so it has to transition closed → open.
   await wrapper.setProps({ modelValue: true })
@@ -79,16 +80,16 @@ async function mountDialog(sourceKey: string | null) {
   return wrapper
 }
 
-async function fillRequiredFields(wrapper: VueWrapper, dialect = 'POSTGRESQL') {
+async function fillRequiredFields(wrapper: VueWrapper, dialect = 'postgresql') {
   const byLabel = (name: string, label: string) =>
     wrapper.findAllComponents({ name }).find(c => c.props('label') === label)!
 
-  await byLabel('AtlasTextField', 'columns.name').setValue('New Source')
-  await byLabel('AtlasTextField', 'configuration.viewEdit.source.label').setValue('NEW_SOURCE')
-  await byLabel('AtlasTextField', 'configuration.viewEdit.connectionString.label').setValue(
+  await byLabel('AtlasTextField', tr('columns.name')).setValue('New Source')
+  await byLabel('AtlasTextField', tr('configuration.viewEdit.source.label')).setValue('NEW_SOURCE')
+  await byLabel('AtlasTextField', tr('configuration.viewEdit.connectionString.label')).setValue(
     'jdbc:postgresql://localhost:5432/newdb'
   )
-  await byLabel('AtlasSelect', 'configuration.viewEdit.dialect.label').setValue(dialect)
+  await byLabel('AtlasSelect', tr('configuration.viewEdit.dialect.label')).setValue(dialect)
   await flushPromises()
 }
 
@@ -125,15 +126,34 @@ describe('DataSourceDialog save', () => {
     expect(createSource.mock.calls[0][0]).toMatchObject({
       name: 'New Source',
       key: 'NEW_SOURCE',
-      dialect: 'POSTGRESQL',
+      dialect: 'postgresql',
     })
     expect(wrapper.emitted('saved')).toHaveLength(1)
     wrapper.unmount()
   })
 
+  it('creates all daimons with zero priority', async () => {
+    const wrapper = await mountDialog(null)
+    await fillRequiredFields(wrapper)
+
+    const daimonRows = wrapper.findAll('tbody tr')
+    for (const [index, schema] of ['cdm', 'vocabulary'].entries()) {
+      await daimonRows[index].findComponent({ name: 'AtlasCheckbox' }).setValue(true)
+      await daimonRows[index].findComponent({ name: 'AtlasTextField' }).setValue(schema)
+    }
+
+    await clickSave(wrapper)
+
+    expect(createSource.mock.calls[0][0].daimons).toEqual([
+      { daimonType: 'CDM', tableQualifier: 'cdm', priority: 0 },
+      { daimonType: 'Vocabulary', tableQualifier: 'vocabulary', priority: 0 },
+    ])
+    wrapper.unmount()
+  })
+
   it('sends the BigQuery keyfile through', async () => {
     const wrapper = await mountDialog(null)
-    await fillRequiredFields(wrapper, 'BIGQUERY')
+    await fillRequiredFields(wrapper, 'bigquery')
 
     const keyfile = new File(['{"type":"service_account"}'], 'key.json', {
       type: 'application/json',
@@ -150,22 +170,27 @@ describe('DataSourceDialog save', () => {
   })
 
   it('updates through the numeric sourceId, not the sourceKey prop', async () => {
-    const wrapper = await mountDialog('CDM')
+    const wrapper = await mountDialog('CDM', 42)
 
     await clickSave(wrapper)
 
+    expect(getSourceDetails).toHaveBeenCalledWith(42)
     expect(createSource).not.toHaveBeenCalled()
     expect(updateSource).toHaveBeenCalledTimes(1)
     const [sourceId, request] = updateSource.mock.calls[0]
     expect(sourceId).toBe(42)
-    expect(request).toMatchObject({ name: 'CDM Source', key: 'CDM' })
+    expect(request).toMatchObject({
+      name: 'CDM Source',
+      key: 'CDM',
+      daimons: [{ daimonType: 'CDM', tableQualifier: 'demo_cdm', priority: 1 }],
+    })
     expect(wrapper.emitted('saved')).toHaveLength(1)
     wrapper.unmount()
   })
 
   it('reports the failure and stays open when the save is rejected', async () => {
     updateSource.mockRejectedValue(new Error('Unable to update data source. Please try again.'))
-    const wrapper = await mountDialog('CDM')
+    const wrapper = await mountDialog('CDM', 42)
 
     await clickSave(wrapper)
 

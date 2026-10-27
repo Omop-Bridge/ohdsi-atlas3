@@ -5,6 +5,7 @@ import { describe, it, expect, vi } from 'vitest'
 
 import {
   computeBinaryStdDiff,
+  mapCharacterizationResultReport,
   mapCharacterizationResults,
   DEFAULT_STRATA_KEY,
 } from '@/utils/characterization-result-mapper'
@@ -168,6 +169,157 @@ describe('mapCharacterizationResults', () => {
     expect(out.prevalence).toHaveLength(1)
     expect(out.prevalence[0].count.M['1']).toBe(5)
     expect(out.prevalence[0].count.F['1']).toBe(7)
+  })
+
+  it('expands comparative target and comparator items', () => {
+    const out = mapCharacterizationResults([{
+      analysisId: 1, analysisName: 'Measures', covariateId: 2, covariateName: 'Weight', conceptId: 3,
+      resultType: 'DISTRIBUTION', targetCohortId: 10, targetCohortName: 'Target', targetAvg: 70,
+      targetStdDev: 8, targetMin: 45, targetP10: 50, targetP25: 60, targetMedian: 70,
+      targetP75: 80, targetP90: 90, targetMax: 100, comparatorCohortId: 20,
+      comparatorCohortName: 'Comparator', comparatorAvg: 75, comparatorStdDev: 9,
+      comparatorMin: 50, comparatorP10: 55, comparatorP25: 65, comparatorMedian: 75,
+      comparatorP75: 85, comparatorP90: 95, comparatorMax: 105,
+    }])
+
+    expect(out.distribution).toHaveLength(1)
+    const distribution = out.distribution[0]
+    expect(distribution.cohorts).toEqual([{ id: 10, name: 'Target' }, { id: 20, name: 'Comparator' }])
+    expect(distribution.avg.overall).toEqual({ '10': 70, '20': 75 })
+    expect(distribution.max.overall).toEqual({ '10': 100, '20': 105 })
+  })
+
+  it('infers distribution rows and skips unclassifiable or cohortless rows', () => {
+    const out = mapCharacterizationResults([
+      { analysisId: 1, covariateId: 2, cohortId: 3, covariateShortName: ' Short name ', avg: 5, stdDev: 1 },
+      { analysisId: 1, covariateId: 3, cohortId: 3 },
+      { analysisId: 1, covariateId: 4, count: 1, pct: Number.NaN },
+    ])
+
+    expect(out.distribution[0]?.covariateName).toBe('Short name')
+    expect(out.prevalence).toEqual([])
+  })
+
+  it('uses report defaults and preserves report cohorts for sparse distribution rows', () => {
+    const out = mapCharacterizationResultReport({
+      analysisId: 1, analysisName: 'Measures', resultType: 'DISTRIBUTION',
+      cohorts: [{ cohortId: 1, cohortName: 'Target' }, { cohortId: 2, cohortName: 'Comparator' }],
+      domainIds: [], items: [{ covariateId: 2, covariateName: 'Weight', conceptId: 3, cohortId: 1, avg: 70, stdDev: 8 }],
+    })
+
+    expect(out.distribution[0]?.analysisName).toBe('Measures')
+    expect(out.distribution[0]?.cohorts).toEqual([{ id: 1, name: 'Target' }, { id: 2, name: 'Comparator' }])
+  })
+
+  it('normalizes two-cohort prevalence reports with fallback labels and server differences', () => {
+    const out = mapCharacterizationResultReport({
+      analysisId: 1, analysisName: 'Demographics', resultType: 'PREVALENCE',
+      cohorts: [{ cohortId: 1, cohortName: 'Target' }, { cohortId: 2, cohortName: 'Comparator' }],
+      domainIds: [], items: [
+        { covariateId: 9, conceptId: 0, cohortId: 1, count: 10, pct: 10, diff: 0.25 },
+        { covariateId: 9, conceptId: 0, cohortId: 2, count: 20, pct: 20, diff: 0.25 },
+      ],
+    })
+
+    expect(out.prevalence[0]?.covariateName).toBe('Covariate 9')
+    expect(out.prevalence[0]?.stdDiff).toBeDefined()
+    expect(out.prevalence[0]?.stdDiffByStrata?.overall).toBe(0.25)
+  })
+
+  it('zero-fills a covariate missing from another subgroup', () => {
+    const out = mapCharacterizationResultReport({
+      analysisId: 1,
+      analysisName: 'Demographics',
+      cohorts: [{ cohortId: 1, cohortName: 'Target' }],
+      domainIds: ['DEMOGRAPHICS'],
+      items: [
+        {
+          analysisId: 1,
+          covariateId: 100,
+          covariateName: 'Male',
+          conceptId: 100,
+          cohortId: 1,
+          strataId: 0,
+          strataName: 'Overall',
+          count: 50,
+          pct: 50,
+        },
+        {
+          analysisId: 1,
+          covariateId: 200,
+          covariateName: 'Female subgroup covariate',
+          conceptId: 200,
+          cohortId: 1,
+          strataId: 2,
+          strataName: 'Female',
+          count: 10,
+          pct: 10,
+        },
+      ],
+    })
+
+    const male = out.prevalence.find(row => row.covariateId === 100)
+    expect(male?.count['2']?.['1']).toBe(0)
+    expect(male?.pct['2']?.['1']).toBe(0)
+    expect(male?.strataNames['2']).toBe('Female')
+  })
+
+  it('keeps temporal and annual series per cohort, sorted, once across strata', () => {
+    const base = {
+      analysisId: 1,
+      covariateId: 100,
+      covariateName: 'Condition X',
+      conceptId: 100,
+      resultType: 'PREVALENCE',
+    }
+    const out = mapCharacterizationResults([
+      {
+        ...base,
+        cohortId: 1,
+        strataId: 0,
+        count: 5,
+        pct: 50,
+        temporal: [
+          { startDay: 10, endDay: 10, count: 2, avg: 0.2 },
+          { startDay: -5, endDay: -5, count: 1, avg: 0.1 },
+          { count: 9, avg: 0.9 },
+        ],
+        temporalAnnual: [
+          { year: 2021, count: 3, avg: 0.3 },
+          { year: 2019, count: 4, avg: 0.4 },
+        ],
+      },
+      {
+        ...base,
+        cohortId: 1,
+        strataId: 2,
+        count: 1,
+        pct: 10,
+        temporal: [{ startDay: 99, endDay: 99, count: 9, avg: 0.9 }],
+      },
+      { ...base, cohortId: 2, strataId: 0, count: 0, pct: 0, temporal: [], temporalAnnual: null },
+    ])
+
+    const stat = out.prevalence[0]
+    expect(stat?.temporalByCohort).toEqual({
+      '1': {
+        temporal: [
+          { startDay: -5, endDay: -5, count: 1, avg: 0.1 },
+          { startDay: 10, endDay: 10, count: 2, avg: 0.2 },
+        ],
+        temporalAnnual: [
+          { year: 2019, count: 4, avg: 0.4 },
+          { year: 2021, count: 3, avg: 0.3 },
+        ],
+      },
+    })
+  })
+
+  it('leaves temporalByCohort unset when no item carries temporal data', () => {
+    const out = mapCharacterizationResults([
+      { analysisId: 1, covariateId: 1, cohortId: 1, count: 1, pct: 1, resultType: 'PREVALENCE' },
+    ])
+    expect(out.prevalence[0]?.temporalByCohort).toBeUndefined()
   })
 })
 

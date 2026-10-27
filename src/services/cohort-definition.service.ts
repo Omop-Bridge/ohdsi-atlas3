@@ -94,7 +94,7 @@ export async function deleteCohortDefinition(id: number): Promise<ApiResult<void
  */
 export async function assignTagToCohort(cohortId: number, tagId: number): Promise<ApiResult<void>> {
   return unwrap(async () => {
-    await httpPost(`/cohortdefinition/${cohortId}/tag/`, tagId)
+    await httpPost(`/cohortdefinition/${cohortId}/tag`, tagId)
   }, CONTEXT)
 }
 
@@ -139,6 +139,19 @@ export async function generateCohort(
     }
 
     return job
+  }, CONTEXT)
+}
+
+/**
+ * Cancel an in-progress cohort generation.
+ * Endpoint: GET /cohortdefinition/{id}/cancel/{sourceKey}
+ */
+export async function cancelCohortGeneration(
+  cohortId: number,
+  sourceKey: string
+): Promise<ApiResult<void>> {
+  return unwrap(async () => {
+    await httpGet<void>(`/cohortdefinition/${cohortId}/cancel/${encodeURIComponent(sourceKey)}`)
   }, CONTEXT)
 }
 

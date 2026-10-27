@@ -2,20 +2,20 @@
   <div class="rule-editor">
     <AtlasTextField
       :model-value="rule.name ?? ''"
-      :label="t('incidenceRate.stratifyName', 'Rule name').value"
+      :label="t('incidenceRate.stratifyName').value"
       hide-details
       class="mb-2"
-      @update:model-value="(v) => emit('update', { name: String(v) })"
+      @update:model-value="(v) => { rule.name = String(v) }"
     />
     <AtlasTextField
       :model-value="rule.description ?? ''"
-      :label="t('columns.description', 'Description').value"
+      :label="t('columns.description').value"
       hide-details
       class="mb-3"
-      @update:model-value="(v) => emit('update', { description: String(v) })"
+      @update:model-value="(v) => { rule.description = String(v) }"
     />
     <CriteriaGroup
-      :group="currentGroup"
+      :group="criteriaGroup"
       :concept-sets="conceptSetOptions"
       @select-concept-set="onSelectConceptSet"
       @edit-concept-set="handleCriteriaEditConceptSet"
@@ -27,6 +27,12 @@
       @local-concept-set-selected="onLocalConceptSetSelected"
       @concept-set-selected="onConceptSetSelected"
       @create-new="handleCreateNewConceptSet"
+    />
+
+    <ConceptSearchDialog
+      v-model="conceptSearchOpen"
+      :domain-filter="conceptSearchDomainFilter"
+      @concepts-selected="onConceptsSelected"
     />
 
     <ConceptSetEditor
@@ -41,13 +47,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
+import { computed } from 'vue'
 import { AtlasTextField } from '@/components/ui'
 import { useI18n } from '@/composables/useI18n'
 import { useCirceConceptSetPicker } from '@/composables/useCirceConceptSetPicker'
 import { useConceptSetsStore } from '@/stores/concept-sets'
 import CriteriaGroup from '@/components/circe/criteria/CriteriaGroup.vue'
 import ConceptSetSelectionDialog from '@/components/cohort/ConceptSetSelectionDialog.vue'
+import ConceptSearchDialog from '@/components/cohort/ConceptSearchDialog.vue'
+import { useCriteriaConceptSearch } from '@/composables/useCriteriaConceptSearch'
 import ConceptSetEditor from '@/components/concepts/ConceptSetEditor.vue'
 import type { ConceptSetReference } from '@/models/cohort.types'
 import type { ConceptSet, ConceptSetItem as CirceConceptSetItem, CriteriaGroup as CriteriaGroupType } from '@/models/circe-types'
@@ -60,26 +68,14 @@ const { rule, conceptSets } = defineProps<{
   conceptSets: ConceptSet[]
 }>()
 const emit = defineEmits<{
-  (e: 'update', partial: Partial<StratifyRule>): void
   (e: 'add-concept-set', cs: ConceptSet): void
 }>()
 const { t } = useI18n()
 const conceptSetsStore = useConceptSetsStore()
 
-// Local reactive copy of the expression group so CriteriaGroup can mutate
-// it in-place.  Synced back to the parent via watch.
-const currentGroup = reactive<CriteriaGroupType>(
-  (rule.expression as CriteriaGroupType) ?? { Type: 'ALL', CriteriaList: [] },
-)
+const criteriaGroup = computed(() => rule.expression as CriteriaGroupType)
 
-watch(
-  () => rule.expression,
-  (next) => {
-    const g = (next as CriteriaGroupType) ?? { Type: 'ALL', CriteriaList: [] }
-    Object.assign(currentGroup, g)
-  },
-  { deep: true },
-)
+const { conceptSearchOpen, conceptSearchDomainFilter, onConceptsSelected } = useCriteriaConceptSearch()
 
 const localConceptSets = computed<ConceptSetReference[]>(() =>
   conceptSets
@@ -90,11 +86,6 @@ const localConceptSets = computed<ConceptSetReference[]>(() =>
       items: (cs.expression?.items ?? []).map(convertCirceItemToAtlas),
     }))
 )
-
-// Emit mutations whenever CriteriaGroup changes the reactive object.
-watch(currentGroup, (g) => {
-  emit('update', { expression: { ...g } })
-}, { deep: true })
 
 const {
   pickerOpen: csPickerOpen,

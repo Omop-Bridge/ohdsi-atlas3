@@ -2,7 +2,7 @@
   <AtlasDialog
     :model-value="modelValue"
     eyebrow="TAGS"
-    :title="t('components.tags.manageTags', 'Manage Tags').value"
+    :title="t('components.tags.manageTags').value"
     max-width="900"
     persistent
     @update:model-value="$emit('update:modelValue', $event)"
@@ -13,7 +13,7 @@
       <AtlasTextField
         v-model="searchQuery"
         prepend-icon="mdi-magnify"
-        :placeholder="t('components.tags.searchTagsPlaceholder', 'Search tags...').value"
+        :placeholder="t('components.tags.searchTagsPlaceholder').value"
         clearable
         variant="outlined"
         class="mb-4"
@@ -27,14 +27,14 @@
       >
         <div class="d-flex align-center justify-space-between mb-2">
           <h4 class="text-subtitle-1">
-            {{ t('tagging.multiAssign.selectedTags', 'Selected Tags').value }} ({{ localSelectedTags.length }})
+            {{ t('tagging.multiAssign.selectedTags').value }} ({{ localSelectedTags.length }})
           </h4>
           <AtlasButton
             size="sm"
             variant="ghost"
             @click="clearAll"
           >
-            {{ t('components.tags.clearAll', 'Clear All').value }}
+            {{ t('components.tags.clearAll').value }}
           </AtlasButton>
         </div>
         <div class="selected-tags-chips">
@@ -68,7 +68,7 @@
           color="primary"
         />
         <p class="text-body-2 mt-2">
-          {{ t('components.tags.loadingTags', 'Loading tags...').value }}
+          {{ t('components.tags.loadingTags').value }}
         </p>
       </div>
 
@@ -78,7 +78,7 @@
         severity="info"
         class="mb-4"
       >
-        {{ t('components.tags.noTagGroups', 'No tag groups found. Please create tag groups in the configuration panel first.').value }}
+        {{ t('components.tags.noTagGroups').value }}
       </AtlasAlert>
 
       <AtlasAlert
@@ -86,7 +86,7 @@
         severity="info"
         class="mb-4"
       >
-        {{ t('components.tags.noTagsMatching', 'No tags found matching "{query}"', { query: searchQuery }).value }}
+        {{ t('components.tags.noTagsMatching', { query: searchQuery }).value }}
       </AtlasAlert>
 
       <!-- Tag Groups -->
@@ -129,7 +129,7 @@
               v-if="getGroupTags(group).length === 0"
               class="text-body-2 text-disabled pa-2"
             >
-              {{ t('components.tags.noTagsInGroup', 'No tags in this group yet.').value }}
+              {{ t('components.tags.noTagsInGroup').value }}
             </div>
             <div
               v-else
@@ -182,7 +182,7 @@
             <AtlasIcon start>
               mdi-plus
             </AtlasIcon>
-            {{ t('components.tags.createNewTag', 'Create New Tag').value }}
+            {{ t('components.tags.createNewTag').value }}
           </v-expansion-panel-title>
           <v-expansion-panel-text>
             <create-tag-form
@@ -199,12 +199,12 @@
         variant="ghost"
         @click="cancel"
       >
-        {{ t('common.cancel', 'Cancel').value }}
+        {{ t('common.cancel').value }}
       </AtlasButton>
       <AtlasButton
         @click="apply"
       >
-        {{ t('components.filterPanel.buttons.apply', 'Apply').value }}
+        {{ t('common.apply').value }}
       </AtlasButton>
     </template>
   </AtlasDialog>
@@ -220,10 +220,12 @@ import CreateTagForm from '@/components/tags/CreateTagForm.vue'
 import { useI18n } from '@/composables/useI18n'
 import { logger } from '@/utils/logger'
 import { matchesTerms } from '@/utils/list-filters'
+import { assignedTags } from '@/utils/asset-tags'
 
 interface Props {
   modelValue: boolean
   selectedTags: Tag[]
+  onApply?: (tags: Tag[]) => Promise<boolean>
 }
 
 const props = defineProps<Props>()
@@ -246,7 +248,7 @@ watch(
   async isOpen => {
     if (isOpen) {
       await loadTags()
-      localSelectedTags.value = [...props.selectedTags]
+      localSelectedTags.value = assignedTags(props.selectedTags)
       expandPanelsWithSelections()
     }
   }
@@ -255,7 +257,7 @@ watch(
 onMounted(async () => {
   if (props.modelValue) {
     await loadTags()
-    localSelectedTags.value = [...props.selectedTags]
+    localSelectedTags.value = assignedTags(props.selectedTags)
     expandPanelsWithSelections()
   }
 })
@@ -274,7 +276,7 @@ async function loadTags() {
 }
 
 const tagGroups = computed(() => {
-  return configStore.allTags.filter(tag => tag.groups?.length === 0)
+  return (configStore.allTags ?? []).filter(tag => tag.groups?.length === 0)
 })
 
 const filteredTagGroups = computed(() => {
@@ -328,6 +330,11 @@ function toggleTag(tag: ConfigTag) {
       id: tag.id,
       name: tag.name,
       color: tag.color,
+      groups: tag.groups.map(group => ({
+        id: group.id,
+        name: group.name,
+        color: group.color,
+      })),
     })
   }
 }
@@ -361,13 +368,18 @@ function expandPanelsWithSelections() {
   expandedPanels.value = groupsWithSelections
 }
 
-function apply() {
-  emit('update:selected-tags', localSelectedTags.value)
+async function apply() {
+  const selectedTags = [...localSelectedTags.value]
+  if (props.onApply && !(await props.onApply(selectedTags))) {
+    return
+  }
+
+  emit('update:selected-tags', selectedTags)
   emit('update:modelValue', false)
 }
 
 function cancel() {
-  localSelectedTags.value = [...props.selectedTags]
+  localSelectedTags.value = assignedTags(props.selectedTags)
   emit('update:modelValue', false)
 }
 

@@ -1,10 +1,3 @@
-<!--
-  DistributionTable
-
-  Renders distribution rows for a single analysis. When more than one
-  cohort is present, a v-select narrows the columns to one cohort at a
-  time — keeps the table readable.
--->
 <template>
   <AtlasCard
     padding="none"
@@ -12,190 +5,217 @@
     :data-testid="`char-results-distribution-${analysisId}`"
   >
     <div class="distribution-table__header">
-      <div class="distribution-table__title-block">
-        <div class="distribution-table__eyebrow-row">
-          <span class="text-eyebrow">{{ analysisName }}</span>
-          <span class="distribution-table__accent-rule" />
-        </div>
-        <h3 class="distribution-table__title">
-          {{ tv('characterizations.results.table.distribution', 'Distribution') }}
-          <span class="distribution-table__count">({{ rows.length }})</span>
-        </h3>
-      </div>
-      <AtlasSpacer />
-      <AtlasSelect
-        v-if="cohorts.length > 1"
-        v-model="selectedCohortId"
-        :items="cohortItems"
-        item-title="title"
-        item-value="value"
-        variant="outlined"
-        hide-details
-        class="distribution-table__cohort-select"
-        :data-testid="`char-results-distribution-cohort-${analysisId}`"
-      />
+      <button
+        class="distribution-table__eyebrow-row distribution-table__toggle"
+        type="button"
+        :aria-expanded="expanded"
+        :aria-controls="`char-results-distribution-content-${analysisId}`"
+        @click="emit('update:expanded', !expanded)"
+      >
+        <AtlasIcon
+          icon="mdi-chevron-down"
+          size="18"
+          class="distribution-table__chevron"
+          :class="{ 'distribution-table__chevron--collapsed': !expanded }"
+        />
+        <span class="text-eyebrow">{{ analysisName }}</span>
+        <span class="distribution-table__accent-rule" />
+      </button>
+      <h3
+        v-if="expanded"
+        class="distribution-table__title"
+      >
+        {{ tv('characterizations.results.table.distribution') }}
+        <span class="distribution-table__count">({{ rows.length }})</span>
+      </h3>
     </div>
 
-    <AtlasDataTable
-      :items="tableRows"
-      :headers="headers"
-      :items-per-page="25"
-      :items-per-page-options="[10, 25, 50, 100, -1]"
-      :data-testid="`char-results-distribution-table-${analysisId}`"
-    >
-      <template #no-data>
-        <div class="distribution-table__empty">
-          {{ tv('common.noData', 'No rows match the current filter.') }}
+    <template v-if="expanded">
+      <div
+        :id="`char-results-distribution-content-${analysisId}`"
+      >
+        <div
+          v-for="table in tables"
+          :key="table.key"
+          class="distribution-table__wrap"
+          :data-testid="`char-results-distribution-table-${analysisId}-${table.key}`"
+        >
+          <h4
+            v-if="tables.length > 1"
+            class="distribution-table__partition-title"
+          >
+            {{ table.label }}
+          </h4>
+          <ResultsDataTable
+            v-model:page="page"
+            v-model:page-size="pageSize"
+            v-model:sort-by="sortBy"
+            :headers="table.headers"
+            :items="rows"
+            item-value="covariateId"
+          >
+            <template #item.conceptId="{ item }">
+              {{ item.conceptId || '—' }}
+            </template>
+            <template
+              v-for="cell in table.cells"
+              #[`item.${cell.key}`]="{ item }"
+            >
+              {{ cell.format(item) }}
+            </template>
+          </ResultsDataTable>
         </div>
-      </template>
-    </AtlasDataTable>
+      </div>
+    </template>
   </AtlasCard>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 
 import { useI18n } from '@/composables/useI18n'
-import { DEFAULT_STRATA_KEY } from '@/utils/characterization-result-mapper'
-import type { DistributionStat, LinkedCohort } from '@/models/characterization.types'
-import { AtlasCard, AtlasDataTable, AtlasSelect, AtlasSpacer } from '@/components/ui'
+import { DEFAULT_STRATA_KEY, strataCount } from '@/utils/characterization-result-mapper'
+import type { DistributionStat, LinkedCohort, StrataCounts } from '@/models/characterization.types'
+import { AtlasCard, AtlasIcon } from '@/components/ui'
+import ResultsDataTable, { type ResultsHeader, type ResultsSortItem } from './ResultsDataTable.vue'
 
 interface Props {
   analysisId: number
   analysisName: string
   rows: DistributionStat[]
   cohorts: LinkedCohort[]
+  /** Person count per cohort and subgroup, shown as "(N=…)" in the column headers. */
+  strataCounts?: StrataCounts
+  expanded?: boolean
 }
 
-const props = defineProps<Props>()
+interface Partition {
+  key: string
+  label: string
+}
+
+type StatisticField = 'avg' | 'min' | 'p25' | 'median' | 'p75' | 'max'
+
+interface Statistic {
+  /** The row field this column sorts by. */
+  field: StatisticField
+  label: string
+  format: (row: DistributionStat, partitionKey: string, cohortId: number) => string
+}
+
+const props = withDefaults(defineProps<Props>(), { strataCounts: () => ({}), expanded: true })
+const emit = defineEmits<{ 'update:expanded': [value: boolean] }>()
 const { tv } = useI18n()
 
-const selectedCohortId = ref<number | null>(props.cohorts[0]?.id ?? null)
+// Shared by every partition table in the card so their rows stay aligned.
+const page = ref(1)
+const pageSize = ref(15)
+const sortBy = ref<ResultsSortItem[]>([])
 
-watch(
-  () => props.cohorts,
-  next => {
-    if (!next.length) {
-      selectedCohortId.value = null
-      return
-    }
-    if (selectedCohortId.value === null || !next.some(c => c.id === selectedCohortId.value)) {
-      selectedCohortId.value = next[0]?.id ?? null
-    }
-  }
-)
-
-const cohortItems = computed(() => props.cohorts.map(c => ({ title: c.name, value: c.id })))
-
-function pickStratumKey(rec: Record<string, Record<string, number>>): string | null {
-  const keys = Object.keys(rec)
-  if (keys.length === 0) {
-    return null
-  }
-  return keys.includes(DEFAULT_STRATA_KEY) ? DEFAULT_STRATA_KEY : (keys[0] as string)
+function isOverall(key: string): boolean {
+  return key === DEFAULT_STRATA_KEY || key === '0'
 }
 
-function valueFor(
-  rec: Record<string, Record<string, number>>,
-  cohortId: number | null
+function value(
+  values: Record<string, Record<string, number>>,
+  partitionKey: string,
+  cohortId: number,
 ): number | undefined {
-  if (cohortId === null) {
-    return undefined
-  }
-  const sKey = pickStratumKey(rec)
-  if (!sKey) {
-    return undefined
-  }
-  return rec[sKey]?.[String(cohortId)]
+  return values[partitionKey]?.[String(cohortId)]
 }
 
-function fmt(value: number | undefined): string {
-  if (typeof value !== 'number' || Number.isNaN(value)) {
-    return '—'
-  }
-  return value.toFixed(2)
+function formatValue(value: number | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : '—'
 }
 
-const tableRows = computed(() =>
-  props.rows.map(row => ({
-    covariateName: row.covariateName,
-    avg: fmt(valueFor(row.avg, selectedCohortId.value)),
-    stdDev: fmt(valueFor(row.stdDev, selectedCohortId.value)),
-    min: fmt(valueFor(row.min, selectedCohortId.value)),
-    p25: fmt(valueFor(row.p25, selectedCohortId.value)),
-    median: fmt(valueFor(row.median, selectedCohortId.value)),
-    p75: fmt(valueFor(row.p75, selectedCohortId.value)),
-    max: fmt(valueFor(row.max, selectedCohortId.value)),
-  }))
-)
+function formatAvgSd(row: DistributionStat, partitionKey: string, cohortId: number): string {
+  const average = value(row.avg, partitionKey, cohortId)
+  const standardDeviation = value(row.stdDev, partitionKey, cohortId)
+  if (average === undefined && standardDeviation === undefined) return '—'
+  return `${formatValue(average)} (${formatValue(standardDeviation)})`
+}
 
-const headers = computed(() => [
-  { title: tv('columns.covariate', 'Covariate'), key: 'covariateName' },
-  { title: tv('columns.avg', 'Mean'), key: 'avg', align: 'end' as const },
-  { title: tv('columns.stddev', 'SD'), key: 'stdDev', align: 'end' as const },
-  { title: tv('common.min', 'Min'), key: 'min', align: 'end' as const },
-  { title: tv('columns.p25', 'P25'), key: 'p25', align: 'end' as const },
-  { title: tv('columns.median', 'Median'), key: 'median', align: 'end' as const },
-  { title: tv('columns.p75', 'P75'), key: 'p75', align: 'end' as const },
-  { title: tv('columns.max', 'Max'), key: 'max', align: 'end' as const },
+function formatStatistic(
+  values: Record<string, Record<string, number>>,
+  partitionKey: string,
+  cohortId: number,
+): string {
+  return formatValue(value(values, partitionKey, cohortId))
+}
+
+const statistics = computed<Statistic[]>(() => [
+  { field: 'avg', label: tv('characterizations.results.table.avgSd'), format: formatAvgSd },
+  { field: 'min', label: tv('characterizations.results.table.min'), format: (row, key, cohortId) => formatStatistic(row.min, key, cohortId) },
+  { field: 'p25', label: tv('columns.p25'), format: (row, key, cohortId) => formatStatistic(row.p25, key, cohortId) },
+  { field: 'median', label: tv('columns.median'), format: (row, key, cohortId) => formatStatistic(row.median, key, cohortId) },
+  { field: 'p75', label: tv('columns.p75'), format: (row, key, cohortId) => formatStatistic(row.p75, key, cohortId) },
+  { field: 'max', label: tv('columns.max'), format: (row, key, cohortId) => formatStatistic(row.max, key, cohortId) },
 ])
+
+const partitions = computed<Partition[]>(() => {
+  const names = new Map<string, string>()
+  for (const row of props.rows) {
+    for (const values of [row.avg, row.stdDev, row.min, row.p25, row.median, row.p75, row.max]) {
+      for (const key of Object.keys(values)) {
+        names.set(key, isOverall(key)
+          ? tv('components.characterizationTable1.overall')
+          : (row.strataNames[key] ?? key))
+      }
+    }
+  }
+  return Array.from(names, ([key, label]) => ({ key, label }))
+    .sort((a, b) => Number(isOverall(b.key)) - Number(isOverall(a.key)))
+})
+
+/**
+ * One column per statistic for a partition and cohort. The key is the path
+ * to the value in the row (`median.<partition>.<cohort>`; strata ids are
+ * numeric), so v-data-table sorts by it directly, in every table that shares
+ * `sortBy`.
+ */
+function statisticCells(partitionKey: string, cohortId: number) {
+  return statistics.value.map(statistic => ({
+    key: `${statistic.field}.${partitionKey}.${cohortId}`,
+    title: statistic.label,
+    align: 'end',
+    format: (row: DistributionStat) => statistic.format(row, partitionKey, cohortId),
+  }))
+}
+
+function withN(label: string, cohortId: number, partitionKey: string): string {
+  const n = strataCount(props.strataCounts, cohortId, partitionKey)
+  return n === undefined
+    ? label
+    : tv('components.characterizationResults.columnWithN', { label, n: n.toLocaleString() })
+}
+
+const tables = computed(() => partitions.value.map(partition => {
+  const groups = props.cohorts.map(cohort => ({
+    key: `cohort-${cohort.id}`,
+    title: withN(cohort.name, cohort.id, partition.key),
+    align: 'center',
+    children: statisticCells(partition.key, cohort.id),
+  }))
+  const headers: ResultsHeader[] = [
+    { key: 'covariateName', title: tv('columns.covariate'), sortable: false },
+    { key: 'conceptId', title: tv('columns.conceptId'), sortable: false },
+    ...groups,
+  ]
+  return { ...partition, headers, cells: groups.flatMap(group => group.children) }
+}))
 </script>
 
 <style scoped>
-.distribution-table {
-  margin-bottom: 16px;
-}
-
-.distribution-table__header {
-  display: flex;
-  align-items: flex-end;
-  gap: 16px;
-  padding: 20px 20px 12px;
-}
-
-.distribution-table__title-block {
-  flex: 0 1 auto;
-}
-
-.distribution-table__eyebrow-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 6px;
-}
-
-.distribution-table__accent-rule {
-  display: inline-block;
-  width: 28px;
-  height: 2px;
-  background-color: rgb(var(--v-theme-orange));
-  border-radius: 2px;
-}
-
-.distribution-table__title {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 18px;
-  font-weight: 500;
-  line-height: 1.3;
-  margin: 0;
-  color: rgb(var(--v-theme-primary));
-}
-
-.distribution-table__count {
-  font-size: 0.85rem;
-  color: rgba(var(--v-theme-on-surface), 0.6);
-  font-weight: 400;
-}
-
-.distribution-table__cohort-select {
-  max-width: 240px;
-}
-
-.distribution-table__empty {
-  padding: 24px;
-  text-align: center;
-  color: rgba(var(--v-theme-on-surface), 0.6);
-}
+.distribution-table { margin-bottom: 16px; }
+.distribution-table__header { padding: 20px 20px 12px; }
+.distribution-table__eyebrow-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.distribution-table__toggle { background: transparent; border: 0; cursor: pointer; padding: 0; }
+.distribution-table__toggle:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
+.distribution-table__chevron { color: rgba(var(--v-theme-on-surface), 0.62); transition: transform 0.15s ease; }
+.distribution-table__chevron--collapsed { transform: rotate(-90deg); }
+.distribution-table__accent-rule { width: 28px; height: 2px; background-color: rgb(var(--v-theme-orange)); }
+.distribution-table__title { display: flex; align-items: baseline; gap: 8px; font-size: 18px; font-weight: 500; margin: 0; color: rgb(var(--v-theme-primary)); }
+.distribution-table__count { font-size: 0.85rem; color: rgba(var(--v-theme-on-surface), 0.6); font-weight: 400; }
+.distribution-table__wrap { overflow-x: auto; padding: 0 20px 20px; }
+.distribution-table__partition-title { font-size: 13px; margin: 0 0 8px; }
 </style>

@@ -16,13 +16,33 @@
       class="ir-workbench__canvas"
       data-testid="ir-workbench-canvas"
     >
-      <button
-        class="rail-toggle"
-        :title="railOpen ? tv('components.incidenceRate.hideDesignPanel', 'Hide design panel') : tv('components.incidenceRate.showDesignPanel', 'Show design panel')"
-        @click="railOpen = !railOpen"
-      >
-        {{ railOpen ? `◂ ${tv('components.incidenceRate.hideAnalysisDesign', 'Hide Analysis Design')}` : `▸ ${tv('components.incidenceRate.showAnalysisDesign', 'Show Analysis Design')}` }}
-      </button>
+      <div class="ir-workbench__canvas-controls">
+        <button
+          class="rail-toggle"
+          :title="railOpen ? tv('components.workbench.hideDesignPanel') : tv('components.workbench.showDesignPanel')"
+          @click="railOpen = !railOpen"
+        >
+          {{ railOpen ? `◂ ${tv('components.workbench.hideAnalysisDesign')}` : `▸ ${tv('components.workbench.showAnalysisDesign')}` }}
+        </button>
+        <AtlasTooltip
+          v-if="validationMessages.length"
+          :text="t('components.incidenceRate.viewValidationMessages').value"
+          location="bottom"
+        >
+          <template #activator="{ props }">
+            <AtlasIconButton
+              v-bind="{ ...props, ariaLabel: t('components.incidenceRate.viewValidationMessages').value }"
+              icon="mdi-alert"
+              variant="text"
+              size="sm"
+              tone="danger"
+              class="ir-workbench__validation-toggle"
+              data-testid="ir-validation-messages-toggle"
+              @click="showValidationDialog = true"
+            />
+          </template>
+        </AtlasTooltip>
+      </div>
       <template v-if="!store.currentIR?.id">
         <IncidenceRateEmptyState variant="no-id" />
       </template>
@@ -83,7 +103,7 @@
             severity="info"
             class="mb-2"
           >
-            {{ t('components.incidenceRate.noCasesFound', 'No cases found for this target/outcome combination. Try selecting a different outcome.').value }}
+            {{ t('components.incidenceRate.noCasesFound').value }}
           </AtlasAlert>
           <template v-else>
             <IncidenceRateTreemap
@@ -107,6 +127,34 @@
         :executions="runTableExecutions"
         @select="onSelectFromHistory"
       />
+
+      <AtlasDialog
+        v-if="validationMessages.length"
+        v-model="showValidationDialog"
+        :eyebrow="t('components.incidenceRate.analysisDesign').value"
+        :title="t('components.incidenceRate.validationMessages').value"
+        :close-label="t('common.close').value"
+        max-width="560"
+      >
+        <ul class="ir-workbench__validation-list">
+          <li
+            v-for="validationError in validationMessages"
+            :key="`${validationError.field}-${validationError.message}`"
+            :class="`ir-workbench__validation-message--${validationError.severity}`"
+          >
+            <AtlasIcon>{{ validationError.severity === 'error' ? 'mdi-alert-circle' : 'mdi-alert' }}</AtlasIcon>
+            <span>{{ validationError.message }}</span>
+          </li>
+        </ul>
+        <template #actions>
+          <AtlasButton
+            variant="secondary"
+            @click="showValidationDialog = false"
+          >
+            {{ t('common.close') }}
+          </AtlasButton>
+        </template>
+      </AtlasDialog>
     </main>
 
     <aside
@@ -121,10 +169,11 @@
     </aside>
 
     <IncidenceRateStratifyInspector
+      :key="strataInspectorSession"
       v-model="strataInspectorOpen"
       :rule="strataInspectorRule"
       :concept-sets="irConceptSets"
-      @update="(p) => strataInspectorIndex !== null && store.updateStratifyRule(strataInspectorIndex, p)"
+      @apply="(rule) => strataInspectorIndex !== null && store.applyStratifyRule(strataInspectorIndex, rule)"
       @add-concept-set="onAddStratifyConceptSet"
     />
   </div>
@@ -145,7 +194,7 @@ import IncidenceRateTreemap from './IncidenceRateTreemap.vue'
 import IncidenceRateComparisonChart from './IncidenceRateComparisonChart.vue'
 import IncidenceRateRatesTable from './IncidenceRateRatesTable.vue'
 import IncidenceRateInsightsRail from './IncidenceRateInsightsRail.vue'
-import { AtlasAlert } from '@/components/ui'
+import { AtlasAlert, AtlasButton, AtlasDialog, AtlasIcon, AtlasIconButton, AtlasTooltip } from '@/components/ui'
 import IncidenceRateEmptyState from './IncidenceRateEmptyState.vue'
 import IncidenceRateStratifyInspector from './IncidenceRateStratifyInspector.vue'
 import DataSourceRunTable, {
@@ -182,9 +231,12 @@ const railOpen = ref(!route.params.id)
 const ds = useDataSourcesStore()
 
 const mode = ref<ViewMode>('treemap')
+const showValidationDialog = ref(false)
+const validationMessages = computed(() => store.validationErrors)
 
 const strataInspectorOpen = ref(false)
 const strataInspectorIndex = ref<number | null>(null)
+const strataInspectorSession = ref(0)
 const strataInspectorRule = computed<StratifyRule | null>(() =>
   strataInspectorIndex.value === null
     ? null
@@ -204,10 +256,12 @@ function onAddStratifyConceptSet(cs: ConceptSet) {
     const next = [...sets]
     next[index] = cs
     store.currentIR.expression.ConceptSets = next
+    store.markDirty()
     return
   }
 
   store.currentIR.expression.ConceptSets = [...sets, cs]
+  store.markDirty()
 }
 
 const selectedExecutionId = computed<number | null>(() => resolveSelectedExecutionId(route.query?.run))
@@ -351,11 +405,13 @@ function onStrataAdd() {
   }
   store.addStratifyRule(newRule)
   strataInspectorIndex.value = (store.currentIR?.expression.strata.length ?? 1) - 1
+  strataInspectorSession.value += 1
   strataInspectorOpen.value = true
 }
 
 function onStrataEdit(index: number) {
   strataInspectorIndex.value = index
+  strataInspectorSession.value += 1
   strataInspectorOpen.value = true
 }
 
@@ -372,7 +428,7 @@ function onExport(format: 'csv' | 'svg' | 'png') {
 <style scoped>
 .ir-workbench {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr) 280px;
+  grid-template-columns: 50% minmax(0, 1fr) 280px;
   background: rgb(var(--v-theme-surface));
   border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
   border-radius: 12px;
@@ -387,8 +443,13 @@ function onExport(format: 'csv' | 'svg' | 'png') {
   display: flex; flex-direction: column; gap: 10px;
   min-height: 540px; min-width: 0; position: relative;
 }
+.ir-workbench__canvas-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
 @media (max-width: 1280px) {
-  .ir-workbench { grid-template-columns: 320px minmax(0, 1fr); }
+  .ir-workbench { grid-template-columns: 50% minmax(0, 1fr); }
   .ir-workbench__insights { display: none; }
 }
 .ir-workbench--rail-collapsed {
@@ -403,11 +464,25 @@ function onExport(format: 'csv' | 'svg' | 'png') {
   font-weight: 600;
   color: var(--atlas-color-on-primary);
   cursor: pointer;
-  align-self: flex-start;
 }
 .rail-toggle:hover {
   opacity: 0.9;
 }
+.ir-workbench__validation-toggle { color: rgb(var(--v-theme-warning)); }
+.ir-workbench__validation-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ir-workbench__validation-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.ir-workbench__validation-message--error { color: rgb(var(--v-theme-error)); }
+.ir-workbench__validation-message--warning { color: rgb(var(--v-theme-warning)); }
 @media (max-width: 1024px) {
   .ir-workbench { grid-template-columns: 1fr; }
   .ir-workbench__rail { display: none; }

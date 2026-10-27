@@ -37,6 +37,18 @@ beforeEach(() => {
 })
 
 describe('useIncidenceRateGeneration', () => {
+  it('rejects an invalid design before calling the generation API', async () => {
+    const store = useIncidenceRateStore()
+    store.createNewIR()
+
+    const gen = useIncidenceRateGeneration(1)
+    const ok = await gen.start('CCAE')
+
+    expect(ok).toBe(false)
+    expect(mockGenerate).not.toHaveBeenCalled()
+    expect(gen.error.value).toContain('Name is required')
+  })
+
   it('start triggers polling and keeps polling until terminal status arrives', async () => {
     const store = useIncidenceRateStore()
     const ds = useDataSourcesStore()
@@ -124,5 +136,35 @@ describe('useIncidenceRateGeneration', () => {
 
     expect(ok).toBe(false)
     expect(gen.error.value).toBe('cannot cancel')
+  })
+
+  it('keeps polling after cancel until WebAPI confirms cancellation', async () => {
+    const store = useIncidenceRateStore()
+    const ds = useDataSourcesStore()
+    ds.sources = [{ sourceId: 2, sourceKey: 'CCAE' }] as never
+    store.setExecutionInfo('CCAE', {
+      executionInfo: { id: { analysisId: 1, sourceId: 2 }, status: 'RUNNING' },
+      summaryList: [],
+    })
+    mockCancel.mockResolvedValue({ success: true, data: undefined })
+    mockListInfo.mockResolvedValue({
+      success: true,
+      data: [{
+        executionInfo: {
+          id: { analysisId: 1, sourceId: 2 },
+          status: 'CANCELED',
+        },
+        summaryList: [],
+      }],
+    })
+
+    const gen = useIncidenceRateGeneration(1)
+    gen.startPolling()
+    expect(await gen.cancel('CCAE')).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(store.executionInfoBySourceKey.CCAE.executionInfo.status).toBe('CANCELED')
+    expect(gen.polling.value).toBe(false)
   })
 })

@@ -27,11 +27,11 @@
             :disabled="!canCreate"
             @click="onAddClick"
           >
-            {{ t('components.conceptSetBuilder.newConceptSet', 'New concept set') }}
+            {{ t('components.conceptSetBuilder.newConceptSet') }}
           </AtlasButton>
 
           <EntityImportButton
-            :label="t('common.import', 'Import').value"
+            :label="t('common.import').value"
             testid="concept-sets-import"
             :disabled="!canCreate"
             :import-design="importDesign"
@@ -64,7 +64,7 @@
         :items="store.filteredSets"
         :loading="store.loading"
         :items-per-page="itemsPerPage"
-        :items-per-page-text="t('datatable.itemsPerPage', 'Rows per page:').value"
+        :items-per-page-text="t('datatable.itemsPerPage').value"
         hover
         class="concept-set-list__table"
         @click:row="onRowClick"
@@ -77,15 +77,22 @@
         <!-- Tags -->
         <template #item.tags="{ item }">
           <div
-            v-if="item.tags && item.tags.length > 0"
+            v-if="displayTags(item.tags).length > 0"
             class="concept-set-list__tags"
           >
             <AtlasChip
-              v-for="tag in item.tags"
+              v-for="tag in displayTags(item.tags)"
               :key="tag.id || tag.name"
               size="sm"
               variant="flat"
-              :style="{ backgroundColor: tagColor(tag.color), color: tagContrastColor(tag.color) }"
+              :style="{
+                backgroundColor: tagColor(tag.color),
+                color: tagContrastColor(tag.color),
+                boxShadow: store.filters.selectedTags.includes(tag.name)
+                  ? '0 0 0 2px rgb(var(--v-theme-primary))'
+                  : undefined,
+              }"
+              @click.stop="store.toggleTagFilterSelection(tag.name)"
             >
               {{ tag.name }}
             </AtlasChip>
@@ -111,12 +118,23 @@
         <template #item.actions="{ item }">
           <div class="concept-set-list__actions">
             <AtlasIconButton
-              icon="mdi-pencil-outline"
-              v-bind="{ ariaLabel: 'Edit' }"
+              title="Clone"
+              v-bind="{ ariaLabel: t('common.duplicate').value }"
+              icon="mdi-content-copy"
               variant="text"
               size="sm"
-              :disabled="!access.canWrite(item.id)"
-              @click.stop="onEditClick(item.id)"
+              :disabled="!canCreate || store.loading"
+              @click.stop="onCopyClick(item.id)"
+            />
+            <AtlasIconButton
+              :title="t('common.delete').value"
+              v-bind="{ ariaLabel: t('common.delete').value }"
+              icon="mdi-delete-outline"
+              variant="text"
+              tone="danger"
+              size="sm"
+              :disabled="!access.canDelete(item.id) || store.loading"
+              @click.stop="onDeleteClick(item)"
             />
           </div>
         </template>
@@ -147,11 +165,8 @@
       <p class="concept-set-list__empty-text">
         {{
           store.activeFilterCount > 0
-            ? t('cs.manager.emptyFilterMessage', 'No concept sets match your search.')
-            : t(
-              'cs.manager.emptyStateMessage',
-              'No concept sets yet — create one to start curating concepts.'
-            )
+            ? t('cs.manager.emptyFilterMessage')
+            : t('cs.manager.emptyStateMessage')
         }}
       </p>
       <AtlasButton
@@ -159,9 +174,35 @@
         icon="mdi-plus"
         @click="onAddClick"
       >
-        {{ t('components.conceptSetBuilder.newConceptSet', 'New concept set') }}
+        {{ t('components.conceptSetBuilder.newConceptSet') }}
       </AtlasButton>
     </div>
+
+    <AtlasDialog
+      v-model="showDeleteDialog"
+      :eyebrow="t('common.confirm').value"
+      :title="t('common.delete').value"
+      max-width="440"
+      @close="showDeleteDialog = false"
+    >
+      {{ t('cs.manager.deleteConfirmation').value }}
+      "{{ selectedSet?.name }}"?
+      <template #actions>
+        <AtlasButton
+          variant="ghost"
+          @click="showDeleteDialog = false"
+        >
+          {{ t('common.cancel') }}
+        </AtlasButton>
+        <AtlasButton
+          variant="danger"
+          :loading="store.loading"
+          @click="confirmDelete"
+        >
+          {{ t('common.delete') }}
+        </AtlasButton>
+      </template>
+    </AtlasDialog>
   </div>
 </template>
 
@@ -173,9 +214,10 @@ import { usePermissions } from '@/composables/usePermissions'
 import { useEntityAccessFor } from '@/composables/useEntityAccess'
 import { formatDate, lastTouchedDate } from '@/utils/date-format'
 import { tagColor, tagContrastColor } from '@/utils/tag-color'
+import { displayTags } from '@/utils/asset-tags'
 import type { ConceptSetListItem } from '@/models/concept-set.types'
 import ConceptSetFilters from './ConceptSetFilters.vue'
-import { AtlasAlert, AtlasButton, AtlasCard, AtlasChip, AtlasDataTable, AtlasIcon, AtlasIconButton, AtlasSkeleton } from '@/components/ui'
+import { AtlasAlert, AtlasButton, AtlasCard, AtlasChip, AtlasDataTable, AtlasDialog, AtlasIcon, AtlasIconButton, AtlasSkeleton } from '@/components/ui'
 import EntityImportButton from '@/components/shared/EntityImportButton.vue'
 import { importConceptSet } from '@/services/concept-set.service'
 
@@ -196,6 +238,8 @@ const store = useConceptSetsStore()
 
 const itemsPerPage = ref(25)
 const sortBy = ref([{ key: 'modifiedDate', order: 'desc' as const }])
+const showDeleteDialog = ref(false)
+const selectedSet = ref<ConceptSetListItem | null>(null)
 
 const countLabel = computed(() => {
   const n = store.filteredSets.length
@@ -208,17 +252,17 @@ const countLabel = computed(() => {
 // ============================================================================
 
 const headers = [
-  { title: t('columns.id', 'ID').value, key: 'id', sortable: true, width: '100px' },
-  { title: t('columns.name', 'Name').value, key: 'name', sortable: true },
-  { title: t('common.tags', 'Tags').value, key: 'tags', sortable: false, width: '220px' },
+  { title: t('columns.id').value, key: 'id', sortable: true, width: '100px' },
+  { title: t('columns.name').value, key: 'name', sortable: true },
+  { title: t('common.tags').value, key: 'tags', sortable: false, width: '220px' },
   {
-    title: t('columns.created', 'Created').value,
+    title: t('columns.created').value,
     key: 'createdDate',
     sortable: true,
     width: '120px',
   },
   {
-    title: t('columns.updated', 'Updated').value,
+    title: t('columns.updated').value,
     key: 'modifiedDate',
     // Sorted off the same fallback the cell displays, so a set that was only
     // ever created orders by its creation date rather than sinking (#292).
@@ -226,7 +270,7 @@ const headers = [
     sortable: true,
     width: '120px',
   },
-  { title: t('columns.author', 'Author').value, key: 'createdBy', sortable: true, width: '150px' },
+  { title: t('columns.author').value, key: 'createdBy', sortable: true, width: '150px' },
   { title: '', key: 'actions', sortable: false, width: '80px', align: 'center' as const },
 ]
 
@@ -254,9 +298,23 @@ function onAddClick() {
   store.openCreateEditor()
 }
 
-function onEditClick(id: number | string | undefined) {
+async function onCopyClick(id: number | string | undefined) {
   if (id !== undefined) {
-    store.openEditEditor(id)
+    await store.copy(id)
+  }
+}
+
+function onDeleteClick(set: ConceptSetListItem) {
+  selectedSet.value = set
+  showDeleteDialog.value = true
+}
+
+async function confirmDelete() {
+  if (!selectedSet.value?.id) return
+  const success = await store.remove(selectedSet.value.id)
+  if (success) {
+    showDeleteDialog.value = false
+    selectedSet.value = null
   }
 }
 
@@ -331,6 +389,7 @@ defineExpose({ importDesign, onImported })
  * during editing flows. */
 .concept-set-list__actions {
   display: flex;
+  gap: 8px;
   justify-content: center;
   opacity: 0;
   transition: opacity 120ms ease;

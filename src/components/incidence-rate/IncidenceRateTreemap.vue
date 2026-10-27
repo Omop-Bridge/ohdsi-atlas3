@@ -5,13 +5,13 @@
       :height="400"
       :show-export="false"
       :enable-zoom="true"
-      :title="tv('components.incidenceRate.stratifiedIncidence', 'Stratified Incidence')"
+      :title="tv('components.incidenceRate.stratifiedIncidence')"
     />
     <div class="ir-treemap__legend">
-      <span class="ir-treemap__legend-label">{{ t('components.incidenceRate.lowerRate', 'Lower rate').value }}</span>
+      <span class="ir-treemap__legend-label">{{ t('components.incidenceRate.lowerRate').value }}</span>
       <div class="ir-treemap__legend-bar" />
-      <span class="ir-treemap__legend-label">{{ t('components.incidenceRate.higherRate', 'Higher rate').value }}</span>
-      <span class="ir-treemap__legend-hint">{{ t('components.incidenceRate.treemapLegendHint', '(color = incidence rate per person-year; area = persons at risk)').value }}</span>
+      <span class="ir-treemap__legend-label">{{ t('components.incidenceRate.higherRate').value }}</span>
+      <span class="ir-treemap__legend-hint">{{ t('components.incidenceRate.treemapLegendHint').value }}</span>
     </div>
   </div>
 </template>
@@ -45,7 +45,7 @@ function decodeBitmask(mask: string, names: string[]): string {
     if (bits[i] === '1') matched.push(names[i]!)
     else unmatched.push(names[i]!)
   }
-  if (matched.length === 0) return 'None matched'
+  if (matched.length === 0) return tv('components.incidenceRate.noneMatched')
   if (unmatched.length === 0) return matched.join(', ')
   return matched.join(', ')
 }
@@ -58,8 +58,7 @@ function collectLeaves(node: RawNode, out: TreemapNode[], names: string[]): void
   const cases = node.cases ?? 0
   const tar = node.timeAtRisk ?? 0
   const persons = node.size ?? 0
-  const py = tar / 365.25
-  const rate = py > 0 ? cases / py : 0
+  const rate = tar > 0 ? cases / tar : 0
 
   const label = names.length > 0 && /^[01]+$/.test(node.name)
     ? decodeBitmask(node.name, names)
@@ -70,7 +69,10 @@ function collectLeaves(node: RawNode, out: TreemapNode[], names: string[]): void
     name: `${label}`,
     value: persons || 1,
     colorValue: rate,
-    conceptPath: `${persons.toLocaleString()} persons || ${cases.toLocaleString()} cases || Rate: ${ratePer1000} per 1,000 PY`,
+    conceptPath: tv(
+      'components.incidenceRate.treemapNodeSummary',
+      { persons: persons.toLocaleString(), cases: cases.toLocaleString(), rate: ratePer1000 }
+    ),
   })
 }
 

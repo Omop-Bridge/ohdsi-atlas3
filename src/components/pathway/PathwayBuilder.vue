@@ -1,6 +1,6 @@
 <template>
   <AnalysisBuilderShell
-    :eyebrow="t('navigation.pathways', 'Pathway analysis').value"
+    :eyebrow="t('navigation.pathways').value"
     :title="title"
     :subtitle="subtitle"
     :authorship="store.currentPathway"
@@ -8,44 +8,43 @@
     testid="pathway-builder"
     @back="handleBack"
   >
-    <template
-      v-if="currentPathway"
-      #title
-    >
-      <input
-        :value="currentPathway.name"
-        :placeholder="t('home.newEntityNames.pathway', 'New pathway').value"
-        :aria-label="t('columns.name', 'Name').value"
-        :readonly="!canEdit"
+    <template #title>
+      <textarea
+        :value="currentPathway?.name ?? ''"
+        :placeholder="t('home.newEntityNames.pathway').value"
+        :aria-label="t('columns.name').value"
+        :readonly="!currentPathway || !canEdit"
+        rows="1"
         class="pathway-builder__title-input"
         data-testid="pathway-builder-name"
-        @input="(e: Event) => store.updateMeta({ name: (e.target as HTMLInputElement).value })"
-      >
+        @input="onTitleInput"
+      />
     </template>
     <template
       v-if="currentPathway"
       #subtitle
     >
-      <input
+      <textarea
         :value="currentPathway.description ?? ''"
-        :placeholder="t('cc.viewEdit.descriptionPlaceholder', 'Add a short description').value"
-        :aria-label="t('columns.description', 'Description').value"
+        :placeholder="t('cc.viewEdit.descriptionPlaceholder').value"
+        :aria-label="t('columns.description').value"
         :readonly="!canEdit"
+        rows="1"
         class="pathway-builder__subtitle-input"
         data-testid="pathway-builder-description"
-        @input="(e: Event) => store.updateMeta({ description: (e.target as HTMLInputElement).value })"
-      >
+        @input="onDescriptionInput"
+      />
     </template>
     <template #actions>
       <AtlasActionToolbar>
         <template #status>
           <AtlasTooltip
-            :text="t('cohortDefinitions.cohortDefinitionManager.tabs.versions', 'Versions').value"
+            :text="t('cohortDefinitions.cohortDefinitionManager.tabs.versions').value"
             location="bottom"
           >
             <template #activator="{ props: tipProps }">
               <AtlasIconButton
-                v-bind="{ ...tipProps, ariaLabel: t('cohortDefinitions.cohortDefinitionManager.tabs.versions', 'Versions').value }"
+                v-bind="{ ...tipProps, ariaLabel: t('cohortDefinitions.cohortDefinitionManager.tabs.versions').value }"
                 icon="mdi-history"
                 variant="text"
                 size="sm"
@@ -56,20 +55,21 @@
             </template>
           </AtlasTooltip>
           <AtlasTooltip
-            :text="t('common.tags', 'Tags').value"
+            :text="t('common.tags').value"
             location="bottom"
           >
             <template #activator="{ props: tipProps }">
               <AtlasBadge
                 v-bind="tipProps"
-                :content="pathwayTags.length || 0"
-                :model-value="pathwayTags.length > 0"
+                :content="pathwayTagCount || 0"
+                :model-value="pathwayTagCount > 0"
                 color="primary"
                 offset-x="6"
                 offset-y="6"
+                data-testid="pathway-builder-tags-badge"
               >
                 <AtlasIconButton
-                  v-bind="{ ariaLabel: t('common.tags', 'Tags').value }"
+                  v-bind="{ ariaLabel: t('common.tags').value }"
                   icon="mdi-tag-outline"
                   variant="text"
                   size="sm"
@@ -82,12 +82,12 @@
           </AtlasTooltip>
           <AtlasTooltip
             v-if="currentPathway?.id"
-            :text="t('components.access.configureAccess', 'Configure access').value"
+            :text="t('components.access.configureAccess').value"
             location="bottom"
           >
             <template #activator="{ props }">
               <EntityAccessLockButton
-                v-bind="{ ...props, ariaLabel: t('components.access.configureAccess', 'Configure access').value }"
+                v-bind="{ ...props, ariaLabel: t('components.access.configureAccess').value }"
                 variant="text"
                 size="sm"
                 :disabled="!currentPathway?.id || isPreviewMode"
@@ -107,16 +107,16 @@
             <AtlasIcon class="d-md-none">
               mdi-close
             </AtlasIcon>
-            <span class="d-none d-md-inline">{{ t('common.cancel', 'Cancel').value }}</span>
+            <span class="d-none d-md-inline">{{ t('common.cancel').value }}</span>
           </AtlasButton>
           <AtlasTooltip
             v-if="previewVersion"
-            :text="t('common.backToCurrent', 'Back to current version').value"
+            :text="t('common.backToCurrent').value"
             location="bottom"
           >
             <template #activator="{ props: tipProps }">
               <AtlasIconButton
-                v-bind="{ ...tipProps, ariaLabel: t('common.backToCurrent', 'Back to current version').value }"
+                v-bind="{ ...tipProps, ariaLabel: t('common.backToCurrent').value }"
                 icon="mdi-undo"
                 variant="text"
                 size="sm"
@@ -126,12 +126,12 @@
             </template>
           </AtlasTooltip>
           <AtlasTooltip
-            :text="t('common.import', 'Import design').value"
+            :text="t('common.importDesign').value"
             location="bottom"
           >
             <template #activator="{ props: tipProps }">
               <AtlasIconButton
-                v-bind="{ ...tipProps, ariaLabel: t('common.import', 'Import design').value }"
+                v-bind="{ ...tipProps, ariaLabel: t('common.importDesign').value }"
                 icon="mdi-upload"
                 variant="text"
                 size="sm"
@@ -142,12 +142,12 @@
             </template>
           </AtlasTooltip>
           <AtlasTooltip
-            :text="t('common.export', 'Export design').value"
+            :text="t('common.exportDesign').value"
             location="bottom"
           >
             <template #activator="{ props: tipProps }">
               <AtlasIconButton
-                v-bind="{ ...tipProps, ariaLabel: t('common.export', 'Export design').value }"
+                v-bind="{ ...tipProps, ariaLabel: t('common.exportDesign').value }"
                 icon="mdi-download"
                 variant="text"
                 size="sm"
@@ -162,37 +162,11 @@
             ref="importFileInput"
             type="file"
             accept="application/json,.json"
-            :aria-label="t('components.pathwayBuilder.importPathwayDesign', 'Import pathway design').value"
+            :aria-label="t('components.pathwayBuilder.importPathwayDesign').value"
             style="display: none"
             data-testid="pathway-builder-import-input"
             @change="handleImportFileChange"
           >
-          <AtlasTooltip
-            :text="t('common.duplicate', 'Duplicate').value"
-            location="bottom"
-          >
-            <template #activator="{ props: tipProps }">
-              <AtlasIconButton
-                v-bind="{ ...tipProps, ariaLabel: t('common.duplicate', 'Duplicate').value }"
-                icon="mdi-content-copy"
-                variant="text"
-                size="sm"
-                :disabled="!currentPathway?.id || !canCopy"
-                data-testid="pathway-builder-copy"
-                @click="onCopy"
-              />
-            </template>
-          </AtlasTooltip>
-          <AtlasButton
-            variant="ghost"
-            tone="danger"
-            icon="mdi-delete-outline"
-            :disabled="!currentPathway?.id || !hasPermission('write:pathway')"
-            data-testid="pathway-builder-delete"
-            @click="onDelete"
-          >
-            {{ t('common.delete', 'Delete') }}
-          </AtlasButton>
           <DisabledReasonTooltip :reason="saveDisabledReason">
             <AtlasButton
               variant="primary"
@@ -200,7 +174,7 @@
               data-testid="pathway-builder-save"
               @click="onSave"
             >
-              {{ t('common.save', 'Save') }}
+              {{ t('common.save') }}
             </AtlasButton>
           </DisabledReasonTooltip>
         </template>
@@ -211,14 +185,14 @@
       v-if="previewVersion"
       #banner
     >
-      {{ t('common.savePreviewWarning', 'Previewing version — saving will create a new pathway') }}
+      {{ t('pathways.editor.previewBanner') }}
     </template>
 
     <div
       v-if="!currentPathway"
       class="pathway-builder__empty"
     >
-      {{ t('common.noData', 'No pathway loaded').value }}
+      {{ t('pathways.editor.noPathwayLoaded').value }}
     </div>
 
     <PathwayWorkbench
@@ -230,8 +204,8 @@
 
     <AtlasDialog
       v-model="showVersions"
-      :eyebrow="t('cohortDefinitions.cohortDefinitionManager.tabs.versions', 'Versions').value"
-      :title="t('components.pathwayBuilder.versionHistory', 'Version history').value"
+      :eyebrow="t('cohortDefinitions.cohortDefinitionManager.tabs.versions').value"
+      :title="t('components.pathwayBuilder.versionHistory').value"
       max-width="900"
       @close="showVersions = false"
     >
@@ -245,7 +219,7 @@
       v-if="currentPathway?.id"
       v-model="showTags"
       :selected-tags="pathwayTags"
-      @update:selected-tags="handleTagsUpdate"
+      :on-apply="handleTagsApply"
     />
 
     <EntityAccessDialog
@@ -253,7 +227,7 @@
       v-model="showAccess"
       entity-type="PATHWAY_ANALYSIS"
       :entity-id="currentPathway.id"
-      :title="t('components.access.configureAccess', 'Configure access').value"
+      :title="t('components.access.configureAccess').value"
       :subtitle="currentPathway.name || undefined"
       @close="showAccess = false"
     />
@@ -278,7 +252,6 @@ import { storeToRefs } from 'pinia'
 import { usePathwayStore } from '@/stores/pathway'
 import { useI18n } from '@/composables/useI18n'
 import { usePathwayBuilder } from '@/composables/usePathwayBuilder'
-import { usePermissions } from '@/composables/usePermissions'
 import AnalysisBuilderShell from '@/components/analysis/AnalysisBuilderShell.vue'
 import AtlasActionToolbar from '@/components/ui/AtlasActionToolbar.vue'
 import PathwayWorkbench from './PathwayWorkbench.vue'
@@ -286,6 +259,7 @@ import VersionsTabContent from '@/components/versions/VersionsTabContent.vue'
 import TagSelectionDialog from '@/components/tags/TagSelectionDialog.vue'
 import { exportPathway, importPathway } from '@/services/pathway.service'
 import { logger } from '@/utils/logger'
+import { assignedTags } from '@/utils/asset-tags'
 import type { VersionsConfig, VersionsTableItem } from '@/components/versions/types'
 import DisabledReasonTooltip from '@/components/shared/DisabledReasonTooltip.vue'
 import { resolveSaveDisabledReason } from '@/utils/save-disabled-reason'
@@ -294,15 +268,14 @@ import type { Tag } from '@/models/webapi.types'
 const store = usePathwayStore()
 const router = useRouter()
 const { currentPathway, previewVersion, isDirty, isPreviewMode, canSave } = storeToRefs(store)
-const { save, copy, remove, feedback } = usePathwayBuilder()
-const { hasPermission } = usePermissions()
+const { save, feedback } = usePathwayBuilder()
 
-// hasPermission is true here because this button does not gate on write access
+// The save button does not gate on write access
 // at all, unlike every sibling editor. Reporting a permission reason it does
 // not actually enforce would be a lie; the gap is raised in OHDSI/Atlas3#300.
 const saveDisabledReason = computed<string>(() =>
   resolveSaveDisabledReason({
-    entity: tv('const.entityName.pathway', 'pathway analysis'),
+    entity: tv('const.entityName.pathway'),
     isNew: !currentPathway.value?.id,
     hasName: true,
     hasPermission: true,
@@ -329,11 +302,12 @@ const canEdit = computed(() => !isPreviewMode.value)
 const isDirtyRef = computed(() => isDirty.value)
 
 const pathwayTags = computed(() => currentPathway.value?.tags ?? [])
+const pathwayTagCount = computed(() => assignedTags(pathwayTags.value).length)
 
 const title = computed(() => {
   const p = currentPathway.value
-  if (!p) return t('navigation.pathways', 'Pathway analysis').value
-  return p.name?.trim() || t('home.newEntityNames.pathway', 'New pathway').value
+  if (!p) return t('navigation.pathways').value
+  return p.name?.trim() || t('home.newEntityNames.pathway').value
 })
 
 const subtitle = computed(() => {
@@ -341,32 +315,19 @@ const subtitle = computed(() => {
   if (!p) return undefined
   return p.id
     ? `#${p.id}${p.description ? ` · ${p.description}` : ''}`
-    : t('home.newEntityNames.pathway', 'New pathway').value
-})
-
-// Mirrors the server's @PreAuthorize on POST /pathway-analysis/{id}:
-//   (read:pathway OR write:pathway) AND create:pathway
-const canCopy = computed(() => {
-  const hasRead = hasPermission('read:pathway') || hasPermission('write:pathway')
-  return hasRead && hasPermission('create:pathway')
+    : t('home.newEntityNames.pathway').value
 })
 
 function handleBack() {
   router.push('/analysis/pathways')
 }
 
-async function handleTagsUpdate(newTags: Tag[]) {
-  await store.syncTags(newTags)
+async function handleTagsApply(newTags: Tag[]): Promise<boolean> {
+  return store.syncTags(newTags)
 }
 
 async function onSave() {
   await save()
-}
-async function onCopy() {
-  await copy()
-}
-async function onDelete() {
-  await remove()
 }
 
 function slugifyName(name: string): string {
@@ -407,7 +368,7 @@ async function handleExport() {
   } catch (err) {
     logger.error('PathwayBuilder', 'Export failed', err)
     feedback.value = {
-      message: t('characterizations.editor.utilities.import.importError', 'Export failed').value,
+      message: t('commonErrors.exportFailed').value,
       color: 'error',
     }
   } finally {
@@ -432,10 +393,7 @@ async function handleImportFileChange(event: Event) {
   } catch (err) {
     logger.error('PathwayBuilder', 'Import parse failed', err)
     feedback.value = {
-      message: t(
-        'characterizations.editor.utilities.import.parseError',
-        'Could not parse design JSON'
-      ).value,
+      message: t('characterizations.editor.utilities.import.parseError').value,
       color: 'error',
     }
     importing.value = false
@@ -445,7 +403,7 @@ async function handleImportFileChange(event: Event) {
   try {
     const created = await importPathway(parsed)
     feedback.value = {
-      message: t('characterizations.editor.utilities.import.importSuccess', 'Imported successfully')
+      message: t('characterizations.editor.utilities.import.importSuccess')
         .value,
       color: 'success',
     }
@@ -455,7 +413,7 @@ async function handleImportFileChange(event: Event) {
   } catch (err) {
     logger.error('PathwayBuilder', 'Import failed', err)
     feedback.value = {
-      message: t('characterizations.editor.utilities.import.importError', 'Import failed').value,
+      message: t('characterizations.editor.utilities.import.importError').value,
       color: 'error',
     }
   } finally {
@@ -507,6 +465,23 @@ onMounted(() => {
 onBeforeUnmount(() => {
   store.stopAutoSave()
 })
+
+function resizeTextArea(target: HTMLTextAreaElement) {
+  target.style.height = 'auto'
+  target.style.height = `${target.scrollHeight}px`
+}
+
+function onTitleInput(event: Event) {
+  const target = event.target as HTMLTextAreaElement
+  resizeTextArea(target)
+  store.updateMeta({ name: target.value })
+}
+
+function onDescriptionInput(event: Event) {
+  const target = event.target as HTMLTextAreaElement
+  resizeTextArea(target)
+  store.updateMeta({ description: target.value })
+}
 </script>
 
 <style scoped>
@@ -518,6 +493,9 @@ onBeforeUnmount(() => {
 
 .pathway-builder__title-input {
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  display: block;
   font-size: 26px;
   font-weight: 300;
   line-height: 1.2;
@@ -529,6 +507,9 @@ onBeforeUnmount(() => {
   padding: 0 0 2px;
   margin: 0;
   font-family: inherit;
+  resize: none;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 .pathway-builder__title-input::placeholder {
   color: rgba(var(--v-theme-on-surface), 0.32);
@@ -545,6 +526,9 @@ onBeforeUnmount(() => {
 
 .pathway-builder__subtitle-input {
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  display: block;
   font-size: 13px;
   line-height: 1.5;
   color: rgb(var(--v-theme-on-surface-variant));
@@ -554,6 +538,9 @@ onBeforeUnmount(() => {
   padding: 0 0 2px;
   margin: 0;
   font-family: inherit;
+  resize: none;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 .pathway-builder__subtitle-input::placeholder {
   color: rgba(var(--v-theme-on-surface), 0.32);

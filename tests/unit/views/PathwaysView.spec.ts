@@ -12,18 +12,17 @@ import PathwaysView from '@/views/PathwaysView.vue'
 import { usePathwayStore } from '@/stores/pathway'
 import type { Pathway } from '@/models/pathway.types'
 import { ApiError } from '@/services/api-error'
+import { tr } from '../../helpers/i18n-mock'
 
 const mockPush = vi.fn()
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: mockPush }),
 }))
 
-vi.mock('@/composables/useI18n', () => ({
-  useI18n: () => ({
-    t: (_key: string, fallback: string) => ref(fallback),
-    tv: (_key: string, fallback: string) => fallback,
-  }),
-}))
+vi.mock('@/composables/useI18n', async () => {
+  const { mockUseI18n } = await import('../../helpers/i18n-mock')
+  return mockUseI18n
+})
 
 vi.mock('@/utils/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -103,6 +102,7 @@ describe('PathwaysView', () => {
     it('should render the search field and create button', () => {
       wrapper = mountView()
       expect(wrapper.find('[data-testid="pathways-search"]').exists()).toBe(true)
+      expect(wrapper.findComponent({ name: 'ConceptSetFilters' }).exists()).toBe(true)
       expect(wrapper.find('[data-testid="pathways-create"]').exists()).toBe(true)
     })
 
@@ -134,30 +134,29 @@ describe('PathwaysView', () => {
       await flushPromises()
 
       const headers = wrapper.findAll('[data-testid="pathways-table"] thead th').map(h => h.text())
-      expect(headers).toContain('ID')
-      expect(headers).toContain('Created')
-      expect(headers).toContain('Updated')
-      expect(headers).not.toContain('Modified')
+      expect(headers).toContain(tr('columns.id'))
+      expect(headers).toContain(tr('columns.created'))
+      expect(headers).toContain(tr('columns.updated'))
+      expect(headers).not.toContain(tr('columns.modified'))
 
       const row = wrapper.find('[data-testid="pathways-table-row-name"]').element.closest('tr')
       expect(row?.textContent).toContain('42')
     })
 
-    it('renders target and event counts from the pathway data', async () => {
+    it('renders tags in the tags column', async () => {
       vi.mocked(listPathways).mockResolvedValue({
         success: true,
-        data: [mkPathway(1)],
+        data: [mkPathway(1, { tags: [{ id: 1, name: 'Clinical' }] })],
       })
       wrapper = mountView()
       await flushPromises()
 
       const text = wrapper.find('[data-testid="pathways-table"]').text()
       expect(text).toContain('Pathway 1')
-      expect(text).toContain('1') // targetCohorts.length
-      expect(text).toContain('2') // eventCohorts.length
+      expect(text).toContain('Clinical')
     })
 
-    it('falls back to 0 when targetCohorts/eventCohorts are missing', async () => {
+    it('renders rows without tags when cohort data is missing', async () => {
       vi.mocked(listPathways).mockResolvedValue({
         success: true,
         data: [mkPathway(1, { targetCohorts: undefined, eventCohorts: undefined })],
@@ -167,8 +166,7 @@ describe('PathwaysView', () => {
 
       const nameLink = wrapper.find('[data-testid="pathways-table-row-name"]')
       expect(nameLink.exists()).toBe(true)
-      const row = nameLink.element.closest('tr')
-      expect(row?.textContent).toContain('0')
+      expect(wrapper.findAll('.analysis-data-table__tag')).toHaveLength(0)
     })
 
     it('shows the error banner when the fetch fails', async () => {
@@ -192,21 +190,42 @@ describe('PathwaysView', () => {
       const input = wrapper.find('[data-testid="pathways-search"] input')
       await input.setValue('diabetes')
 
-      expect(wrapper.vm.searchInput).toBe('diabetes')
       expect(wrapper.vm.filters.searchQuery).toBe('diabetes')
       expect(wrapper.vm.page).toBe(0)
     })
 
-    it('clears the query when the field emits a null value', async () => {
+    it('clears the query from the shared search field', async () => {
       wrapper = mountView()
-      wrapper.vm.searchInput = 'diabetes'
-      wrapper.vm.filters.searchQuery = 'diabetes'
+      const input = wrapper.find('[data-testid="pathways-search"] input')
+      await input.setValue('diabetes')
+      await input.setValue('')
 
-      const field = wrapper.findComponent({ name: 'AtlasTextField' })
-      await field.vm.$emit('update:modelValue', null)
-
-      expect(wrapper.vm.searchInput).toBe('')
       expect(wrapper.vm.filters.searchQuery).toBe('')
+    })
+
+    it('filters by a clicked tag chip', async () => {
+      vi.mocked(listPathways).mockResolvedValue({
+        success: true,
+        data: [
+          mkPathway(1, { tags: [{ id: 1, name: 'Clinical' }] }),
+          mkPathway(2, { tags: [{ id: 2, name: 'Claims' }] }),
+        ],
+      })
+      wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.page = 2
+
+      const tag = wrapper
+        .findAll('.analysis-data-table__tag')
+        .find(chip => chip.text() === 'Clinical')
+      expect(tag).toBeDefined()
+      await tag!.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.vm.filters.selectedTags).toEqual(['Clinical'])
+      expect(wrapper.vm.page).toBe(0)
+      expect(wrapper.text()).toContain('Pathway 1')
+      expect(wrapper.text()).not.toContain('Pathway 2')
     })
   })
 
@@ -262,13 +281,13 @@ describe('PathwaysView', () => {
       wrapper = mountView()
       await flushPromises()
 
-      const copyButton = wrapper.find('button[aria-label="Copy"]')
+      const copyButton = wrapper.find(`button[aria-label="${tr('common.copy')}"]`)
       await copyButton.trigger('click')
       await flushPromises()
 
       expect(copyPathway).toHaveBeenCalledWith(1)
       expect(mockPush).toHaveBeenCalledWith('/pathways/99')
-      expect(wrapper.vm.feedback).toEqual({ message: 'Pathway copied', color: 'success' })
+      expect(wrapper.vm.feedback).toEqual({ message: tr('views.pathways.copied'), color: 'success' })
     })
 
     it('shows an error and logs when the copy fails', async () => {
@@ -282,7 +301,7 @@ describe('PathwaysView', () => {
 
       await wrapper.vm.handleCopy(mkPathway(1))
 
-      expect(wrapper.vm.feedback).toEqual({ message: 'Copy failed', color: 'error' })
+      expect(wrapper.vm.feedback).toEqual({ message: tr('commonErrors.copyFailed'), color: 'error' })
       expect(mockPush).not.toHaveBeenCalled()
     })
 
@@ -330,7 +349,7 @@ describe('PathwaysView', () => {
       await wrapper.vm.$nextTick()
 
       const buttons = wrapper.findAllComponents({ name: 'AtlasButton' })
-      const cancelButton = buttons.find(b => b.text().includes('Cancel'))
+      const cancelButton = buttons.find(b => b.text().includes(tr('common.cancel')))
       await cancelButton?.trigger('click')
 
       expect(wrapper.vm.showDelete).toBe(false)
@@ -348,7 +367,7 @@ describe('PathwaysView', () => {
 
       expect(deletePathway).toHaveBeenCalledWith(5)
       expect(listPathways).toHaveBeenCalledTimes(2)
-      expect(wrapper.vm.feedback).toEqual({ message: 'Pathway deleted', color: 'success' })
+      expect(wrapper.vm.feedback).toEqual({ message: tr('views.pathways.deleted'), color: 'success' })
       expect(wrapper.vm.showDelete).toBe(false)
       expect(wrapper.vm.deleteTarget).toBeNull()
     })
@@ -380,7 +399,7 @@ describe('PathwaysView', () => {
   describe('Feedback Snackbar', () => {
     it('clears feedback when the snackbar closes', async () => {
       wrapper = mountView()
-      wrapper.vm.feedback = { message: 'Pathway deleted', color: 'success' }
+      wrapper.vm.feedback = { message: tr('views.pathways.deleted'), color: 'success' }
       await wrapper.vm.$nextTick()
 
       const snackbar = wrapper.findComponent({ name: 'AtlasSnackbar' })
@@ -391,7 +410,7 @@ describe('PathwaysView', () => {
 
     it('clears feedback when the snackbar emits an update event', async () => {
       wrapper = mountView()
-      wrapper.vm.feedback = { message: 'Pathway deleted', color: 'success' }
+      wrapper.vm.feedback = { message: tr('views.pathways.deleted'), color: 'success' }
       await wrapper.vm.$nextTick()
 
       const snackbar = wrapper.findComponent({ name: 'AtlasSnackbar' })
@@ -414,13 +433,29 @@ describe('PathwaysView', () => {
 
     it('maps snackbar error severity to danger', () => {
       wrapper = mountView()
-      wrapper.vm.feedback = { message: 'Copy failed', color: 'error' }
+      wrapper.vm.feedback = { message: tr('commonErrors.copyFailed'), color: 'error' }
 
       expect(wrapper.vm.feedbackSeverity).toBe('danger')
     })
   })
 
   describe('Pagination', () => {
+    it('sorts all pathways before selecting the current page', async () => {
+      const data = Array.from({ length: 51 }, (_, index) => mkPathway(index + 1))
+      vi.mocked(listPathways).mockResolvedValue({ success: true, data })
+      wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.page = 1
+
+      const table = wrapper.findComponent({ name: 'AnalysisDataTable' })
+      table.vm.$emit('update:sortBy', [{ key: 'id', order: 'desc' }])
+      await flushPromises()
+
+      const rows = table.props('items') as Pathway[]
+      expect(rows[0]?.id).toBe(26)
+      expect(rows.at(-1)?.id).toBe(2)
+    })
+
     it('renders pagination controls and paginates across pages', async () => {
       const data = Array.from({ length: 30 }, (_, i) => mkPathway(i + 1))
       vi.mocked(listPathways).mockResolvedValue({ success: true, data })
@@ -430,14 +465,14 @@ describe('PathwaysView', () => {
       expect(wrapper.text()).toContain('1 / 2')
 
       const buttons = wrapper.findAllComponents({ name: 'AtlasButton' })
-      const nextButton = buttons.find(b => b.text().includes('Next'))
+      const nextButton = buttons.find(b => b.text().includes(tr('configuration.userImport.wizard.buttons.next')))
       await nextButton?.trigger('click')
       await wrapper.vm.$nextTick()
 
       expect(wrapper.vm.page).toBe(1)
       expect(wrapper.text()).toContain('2 / 2')
 
-      const prevButton = wrapper.findAllComponents({ name: 'AtlasButton' }).find(b => b.text().includes('Previous'))
+      const prevButton = wrapper.findAllComponents({ name: 'AtlasButton' }).find(b => b.text().includes(tr('datatable.language.paginate.previous')))
       await prevButton?.trigger('click')
       expect(wrapper.vm.page).toBe(0)
     })

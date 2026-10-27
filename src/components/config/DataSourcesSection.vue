@@ -20,6 +20,7 @@
             <AtlasButton
               toggle
               value="application"
+              :disabled="!canManageAll()"
             >
               {{ t('configuration.priorityOptions.application') }}
             </AtlasButton>
@@ -32,7 +33,7 @@
     <v-card>
       <v-card-title class="d-flex align-center justify-space-between">
         <span>{{ t('navigation.datasources') }}</span>
-        <DisabledReasonTooltip :reason="manageDisabledReason">
+        <DisabledReasonTooltip :reason="denied(canManageAll())">
           <AtlasButton
             icon="mdi-plus"
             :disabled="!canManageAll()"
@@ -76,50 +77,53 @@
               <td>
                 <div class="d-flex align-center">
                   <input
-                    v-model="selectedVocabulary"
                     type="radio"
                     :value="source.sourceKey"
-                    :disabled="!source.hasVocabulary"
+                    :checked="isDaimonSelected(source.sourceKey, 'Vocabulary')"
+                    :disabled="!canSelectDaimon(source, 'hasVocabulary')"
                     :aria-label="`${tv('columns.vocabulary')}: ${source.sourceName}`"
                     class="mr-2"
+                    @change="selectDaimon(source, 'Vocabulary')"
                   >
                   <span>{{ source.vocabularyVersion || source.version || '-' }}</span>
                 </div>
               </td>
               <td>
                 <input
-                  v-model="selectedEvidence"
                   type="radio"
                   :value="source.sourceKey"
-                  :disabled="!source.hasEvidence"
+                  :checked="isDaimonSelected(source.sourceKey, 'CEM')"
+                  :disabled="!canSelectDaimon(source, 'hasEvidence')"
                   :aria-label="`${tv('columns.evidence')}: ${source.sourceName}`"
+                  @change="selectDaimon(source, 'CEM')"
                 >
               </td>
               <td>
                 <input
-                  v-model="selectedResults"
                   type="radio"
                   :value="source.sourceKey"
-                  :disabled="!source.hasResults"
+                  :checked="isDaimonSelected(source.sourceKey, 'Results')"
+                  :disabled="!canSelectDaimon(source, 'hasResults')"
                   :aria-label="`${tv('columns.results')}: ${source.sourceName}`"
+                  @change="selectDaimon(source, 'Results')"
                 >
               </td>
               <td>
                 <div class="d-flex gap-2">
-                  <DisabledReasonTooltip :reason="writeDisabledReason(source)">
+                  <DisabledReasonTooltip :reason="denied(canManageAll())">
                     <AtlasIconButton
                       icon="mdi-pencil"
-                      v-bind="{ ariaLabel: tv('configuration.tagManagement.edit') }"
+                      v-bind="{ ariaLabel: tv('common.edit') }"
                       size="sm"
-                      :disabled="!canWriteSource(source.sourceId)"
+                      :disabled="!canManageAll()"
                       @click="openEditDialog(source)"
                     />
                   </DisabledReasonTooltip>
-                  <DisabledReasonTooltip :reason="writeDisabledReason(source)">
+                  <DisabledReasonTooltip :reason="denied(canManageAccess())">
                     <EntityAccessLockButton
-                      v-bind="{ ariaLabel: tv('components.access.configureAccess', 'Configure access') }"
+                      v-bind="{ ariaLabel: tv('components.access.configureAccess') }"
                       size="sm"
-                      :disabled="!canWriteSource(source.sourceId)"
+                      :disabled="!canManageAccess()"
                       @click="openAccessDialog(source)"
                     />
                   </DisabledReasonTooltip>
@@ -129,22 +133,22 @@
                     size="sm"
                     @click="checkConnection(source)"
                   />
-                  <DisabledReasonTooltip :reason="writeDisabledReason(source)">
+                  <DisabledReasonTooltip :reason="cacheDisabledReason()">
                     <AtlasIconButton
                       icon="mdi-refresh"
                       v-bind="{ ariaLabel: tv('columns.refreshCache') }"
                       size="sm"
-                      :disabled="!source.hasResults || !canWriteSource(source.sourceId)"
+                      :disabled="!source.hasResults || !canClearServerCache()"
                       @click="refreshCache(source)"
                     />
                   </DisabledReasonTooltip>
-                  <DisabledReasonTooltip :reason="writeDisabledReason(source)">
+                  <DisabledReasonTooltip :reason="denied(canManageAll())">
                     <AtlasIconButton
                       icon="mdi-delete"
                       v-bind="{ ariaLabel: tv('common.delete') }"
                       size="sm"
                       tone="danger"
-                      :disabled="!canWriteSource(source.sourceId)"
+                      :disabled="!canManageAll()"
                       @click="confirmDeleteSource(source)"
                     />
                   </DisabledReasonTooltip>
@@ -175,10 +179,10 @@
           >
             {{ t('configuration.buttons.clearConfigurationCache') }}
           </AtlasButton>
-          <DisabledReasonTooltip :reason="manageDisabledReason">
+          <DisabledReasonTooltip :reason="denied(canClearServerCache())">
             <AtlasButton
               icon="mdi-server"
-              :disabled="!canManageAll()"
+              :disabled="!canClearServerCache()"
               @click="clearServerCache"
             >
               {{ t('configuration.buttons.clearServerCache') }}
@@ -208,6 +212,7 @@
     <DataSourceDialog
       v-model="showDialog"
       :source-key="editingSourceKey"
+      :source-id="editingSourceId"
       @saved="handleDialogSaved"
       @deleted="handleDialogDeleted"
       @error="handleDialogError"
@@ -217,7 +222,7 @@
       v-model="showAccessDialog"
       entity-type="SOURCE"
       :entity-id="accessSourceId"
-      :title="tv('components.access.configureAccess', 'Configure access')"
+      :title="tv('components.access.configureAccess')"
       :subtitle="accessSourceLabel"
       @close="showAccessDialog = false"
     />
@@ -252,7 +257,7 @@
 
 <script setup lang="ts">
 import { AtlasAlert, AtlasButton, AtlasDialog, AtlasIcon, AtlasIconButton, AtlasSnackbar } from '@/components/ui'
-import { computed, ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { useSourceAccessFor } from '@/composables/useEntityAccess'
 import DisabledReasonTooltip from '@/components/shared/DisabledReasonTooltip.vue'
@@ -268,16 +273,26 @@ const { t, tv } = useI18n()
 // controls that change one need their own guard. They are disabled with a
 // reason rather than hidden, so a user can see that the action exists and why
 // it is unavailable to them.
-const { canWrite: canWriteSource, canManageAll } = useSourceAccessFor()
+const {
+  canRead: canReadSource,
+  canManageAll,
+  canClearServerCache,
+  canManageAccess,
+} = useSourceAccessFor()
 
-const manageDisabledReason = computed(() =>
-  canManageAll() ? '' : tv('common.noPermission', 'You do not have permission for this action')
-)
+function denied(allowed: boolean): string {
+  return allowed ? '' : tv('common.noPermission')
+}
 
-function writeDisabledReason(source: DataSourceDisplay): string {
-  return canWriteSource(source.sourceId)
-    ? ''
-    : tv('common.noPermission', 'You do not have permission for this action')
+function cacheDisabledReason(): string {
+  return denied(canClearServerCache())
+}
+
+function canSelectDaimon(source: DataSourceDisplay, flag: DaimonFlag): boolean {
+  if (!source[flag]) return false
+  return priorityScope.value === 'application'
+    ? canManageAll()
+    : canReadSource(source.sourceId)
 }
 
 interface DataSourceDisplay {
@@ -291,7 +306,11 @@ interface DataSourceDisplay {
   hasVocabulary: boolean
   hasEvidence: boolean
   hasResults: boolean
+  priority: Record<DaimonKind, number>
 }
+
+type DaimonKind = 'Vocabulary' | 'CEM' | 'Results'
+type DaimonFlag = 'hasVocabulary' | 'hasEvidence' | 'hasResults'
 
 const OWNED_CACHE_KEYS = ['selectedVocabulary', 'selectedEvidence', 'selectedResults']
 
@@ -301,6 +320,9 @@ const dataSources = ref<DataSourceDisplay[]>([])
 const selectedVocabulary = ref<string>('')
 const selectedEvidence = ref<string>('')
 const selectedResults = ref<string>('')
+const applicationVocabulary = ref<string>('')
+const applicationEvidence = ref<string>('')
+const applicationResults = ref<string>('')
 const showToast = ref(false)
 const showErrorToast = ref(false)
 const toastMessage = ref('')
@@ -309,6 +331,7 @@ const errorMessage = ref('')
 // Dialog state
 const showDialog = ref(false)
 const editingSourceKey = ref<string | null>(null)
+const editingSourceId = ref<number | null>(null)
 
 const showAccessDialog = ref(false)
 const accessSourceId = ref<number | null>(null)
@@ -337,6 +360,83 @@ watch(selectedResults, newValue => {
     localStorage.setItem('selectedResults', newValue)
   }
 })
+
+// System default: highest daimon priority for the type, list order on ties.
+function defaultKey(daimonType: DaimonKind, flag: DaimonFlag): string {
+  let best: DataSourceDisplay | undefined
+  for (const s of dataSources.value.filter(x => x[flag] && canReadSource(x.sourceId))) {
+    if (!best || s.priority[daimonType] > best.priority[daimonType]) best = s
+  }
+  return best?.sourceKey ?? ''
+}
+
+function applicationDefaultKey(daimonType: DaimonKind, flag: DaimonFlag): string {
+  let best: DataSourceDisplay | undefined
+  for (const source of dataSources.value.filter(candidate => candidate[flag])) {
+    if (!best || source.priority[daimonType] > best.priority[daimonType]) best = source
+  }
+  return best?.sourceKey ?? ''
+}
+
+function usableKey(saved: string | null, flag: DaimonFlag): string {
+  const match = dataSources.value.find(s => s.sourceKey === saved && s[flag])
+  return match && canReadSource(match.sourceId) ? match.sourceKey : ''
+}
+
+function maxPriority(daimons: Array<{ daimonType: string; priority?: number }>, type: DaimonKind): number {
+  return Math.max(0, ...daimons.filter(d => d.daimonType === type).map(d => d.priority ?? 0))
+}
+
+function applyDefaultSelections() {
+  selectedVocabulary.value = defaultKey('Vocabulary', 'hasVocabulary')
+  selectedEvidence.value = defaultKey('CEM', 'hasEvidence')
+  selectedResults.value = defaultKey('Results', 'hasResults')
+}
+
+function applyApplicationSelections() {
+  applicationVocabulary.value = applicationDefaultKey('Vocabulary', 'hasVocabulary')
+  applicationEvidence.value = applicationDefaultKey('CEM', 'hasEvidence')
+  applicationResults.value = applicationDefaultKey('Results', 'hasResults')
+}
+
+function selectionFor(daimonType: DaimonKind) {
+  if (priorityScope.value === 'application') {
+    return daimonType === 'Vocabulary'
+      ? applicationVocabulary
+      : daimonType === 'CEM'
+        ? applicationEvidence
+        : applicationResults
+  }
+  return daimonType === 'Vocabulary'
+    ? selectedVocabulary
+    : daimonType === 'CEM'
+      ? selectedEvidence
+      : selectedResults
+}
+
+function isDaimonSelected(sourceKey: string, daimonType: DaimonKind): boolean {
+  return selectionFor(daimonType).value === sourceKey
+}
+
+async function selectDaimon(source: DataSourceDisplay, daimonType: DaimonKind) {
+  const selection = selectionFor(daimonType)
+  selection.value = source.sourceKey
+  if (priorityScope.value === 'application') {
+    await updateSourceDaimonPriority(source, daimonType)
+  }
+}
+
+async function updateSourceDaimonPriority(source: DataSourceDisplay, daimonType: DaimonKind) {
+  if (priorityScope.value !== 'application') return
+
+  try {
+    await httpPost(`/source/${source.sourceKey}/daimons/${daimonType}/set-priority`)
+    await loadDataSources()
+  } catch {
+    errorMessage.value = tv('configuration.alerts.failUpdatePrioritySourceDaimon')
+    showErrorToast.value = true
+  }
+}
 
 /**
  * Load data sources on mount
@@ -380,6 +480,11 @@ async function loadDataSources() {
           hasVocabulary: hasVocab,
           hasEvidence: s.daimons?.some(d => d.daimonType === 'CEM') ?? false,
           hasResults: s.daimons?.some(d => d.daimonType === 'Results') ?? false,
+          priority: {
+            Vocabulary: maxPriority(s.daimons, 'Vocabulary'),
+            CEM: maxPriority(s.daimons, 'CEM'),
+            Results: maxPriority(s.daimons, 'Results'),
+          },
         }
       })
     )
@@ -391,17 +496,15 @@ async function loadDataSources() {
     const savedEvidence = localStorage.getItem('selectedEvidence')
     const savedResults = localStorage.getItem('selectedResults')
 
-    selectedVocabulary.value =
-      savedVocab || dataSources.value.find(s => s.hasVocabulary)?.sourceKey || ''
-    selectedEvidence.value =
-      savedEvidence || dataSources.value.find(s => s.hasEvidence)?.sourceKey || ''
-    selectedResults.value =
-      savedResults || dataSources.value.find(s => s.hasResults)?.sourceKey || ''
+    selectedVocabulary.value = usableKey(savedVocab, 'hasVocabulary') || defaultKey('Vocabulary', 'hasVocabulary')
+    selectedEvidence.value = usableKey(savedEvidence, 'hasEvidence') || defaultKey('CEM', 'hasEvidence')
+    selectedResults.value = usableKey(savedResults, 'hasResults') || defaultKey('Results', 'hasResults')
+    applyApplicationSelections()
   } catch (error: unknown) {
     errorMessage.value =
       error instanceof Error
         ? error.message
-        : tv('components.config.dataSources.loadError', 'Failed to load data sources')
+        : tv('components.config.dataSources.loadError')
     showErrorToast.value = true
   }
 }
@@ -445,6 +548,7 @@ async function refreshCache(source: DataSourceDisplay) {
  */
 function clearLocalCache() {
   OWNED_CACHE_KEYS.forEach(key => localStorage.removeItem(key))
+  applyDefaultSelections()
   toastMessage.value = tv('configuration.alerts.clearLocalCache')
   showToast.value = true
 }
@@ -473,6 +577,7 @@ async function clearServerCache() {
  */
 function openCreateDialog() {
   editingSourceKey.value = null
+  editingSourceId.value = null
   showDialog.value = true
 }
 
@@ -481,6 +586,7 @@ function openCreateDialog() {
  */
 function openEditDialog(source: DataSourceDisplay) {
   editingSourceKey.value = source.sourceKey
+  editingSourceId.value = source.sourceId
   showDialog.value = true
 }
 

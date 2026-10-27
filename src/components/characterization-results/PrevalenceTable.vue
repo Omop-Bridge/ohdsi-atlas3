@@ -1,15 +1,3 @@
-<!--
-  PrevalenceTable
-
-  Renders prevalence rows for a single analysis. Columns are built
-  dynamically from the linked cohorts: each cohort gets a Count and Pct
-  column. When exactly two cohorts are present, an additional Std Diff
-  column is appended.
-
-  The Concept ID cell links out to Athena (the OHDSI public vocabulary
-  search), matching the convention used elsewhere in the OHDSI
-  ecosystem.
--->
 <template>
   <AtlasCard
     padding="none"
@@ -17,271 +5,382 @@
     :data-testid="`char-results-prevalence-${analysisId}`"
   >
     <div class="prevalence-table__header">
-      <div class="prevalence-table__eyebrow-row">
+      <button
+        class="prevalence-table__eyebrow-row prevalence-table__toggle"
+        type="button"
+        :aria-expanded="expanded"
+        :aria-controls="`char-results-prevalence-content-${analysisId}`"
+        :data-testid="`char-results-prevalence-toggle-${analysisId}`"
+        @click="emit('update:expanded', !expanded)"
+      >
+        <AtlasIcon
+          icon="mdi-chevron-down"
+          size="18"
+          class="prevalence-table__chevron"
+          :class="{ 'prevalence-table__chevron--collapsed': !expanded }"
+        />
         <span class="text-eyebrow">{{ analysisName }}</span>
+        <span
+          v-for="kind in timeSeriesKinds"
+          :key="kind"
+          class="prevalence-table__time-series"
+          role="img"
+          :aria-label="tv(TIME_SERIES[kind].labelKey)"
+          :data-testid="`char-results-${kind}-available-${analysisId}`"
+        >
+          <AtlasIcon
+            :icon="TIME_SERIES[kind].icon"
+            size="16"
+            aria-hidden="true"
+          />
+          <AtlasTooltip
+            activator="parent"
+            location="top"
+            :text="tv(TIME_SERIES[kind].labelKey)"
+          />
+        </span>
         <span class="prevalence-table__accent-rule" />
-      </div>
-      <h3 class="prevalence-table__title">
-        {{ tv('characterizations.results.table.prevalence', 'Prevalence') }}
+      </button>
+      <h3
+        v-if="expanded"
+        class="prevalence-table__title"
+      >
+        {{ tv('characterizations.results.table.prevalence') }}
         <span class="prevalence-table__count">({{ rows.length }})</span>
       </h3>
     </div>
 
-    <AtlasDataTable
-      :items="tableRows"
-      :headers="headers"
-      :items-per-page="25"
-      :items-per-page-options="[10, 25, 50, 100, -1]"
-      class="prevalence-table__table"
-      :data-testid="`char-results-prevalence-table-${analysisId}`"
-    >
-      <template #[`item.conceptId`]="{ item }">
-        <a
-          v-if="item.conceptId"
-          href="#"
-          class="prevalence-table__concept-link"
-          @click.prevent="openConcept(item.conceptId)"
+    <template v-if="expanded">
+      <div
+        :id="`char-results-prevalence-content-${analysisId}`"
+      >
+        <div
+          v-for="table in tables"
+          :key="table.key"
+          class="prevalence-table__wrap"
+          :data-testid="`char-results-prevalence-table-${analysisId}-${table.key}`"
         >
-          {{ item.conceptId }}
-        </a>
-        <span v-else>—</span>
-      </template>
-
-      <template
-        v-for="cohort in cohorts"
-        :key="`pct-${cohort.id}`"
-        #[`item.pct_${cohort.id}`]="{ item }"
-      >
-        {{ formatPercent(item[`pct_${cohort.id}`]) }}
-      </template>
-
-      <template
-        v-for="cohort in cohorts"
-        :key="`count-${cohort.id}`"
-        #[`item.count_${cohort.id}`]="{ item }"
-      >
-        {{ formatCount(item[`count_${cohort.id}`]) }}
-      </template>
-
-      <template #[`item.stdDiff`]="{ item }">
-        {{ formatStdDiff(item.stdDiff) }}
-      </template>
-
-      <template #[`item.actions`]="{ item }">
-        <AtlasIconButton
-          icon="mdi-magnify"
-          size="sm"
-          variant="text"
-          v-bind="{ ariaLabel: tv('columns.explore', 'Explore') }"
-          :data-testid="`char-results-explore-${item.covariateId}`"
-          @click="onExplore(item._row)"
-        />
-      </template>
-
-      <template #no-data>
-        <div class="prevalence-table__empty">
-          {{ tv('common.noData', 'No rows match the current filter.') }}
+          <h4
+            v-if="table.label"
+            class="prevalence-table__partition-title"
+          >
+            {{ table.label }}
+          </h4>
+          <ResultsDataTable
+            v-model:page="page"
+            v-model:page-size="pageSize"
+            v-model:sort-by="sortBy"
+            :headers="table.headers"
+            :items="tableRows"
+            item-value="covariateId"
+            class="prevalence-table__table"
+          >
+            <template #item.covariateName="{ item }">
+              <span
+                class="prevalence-table__covariate"
+                :title="item.covariateName"
+              >
+                {{ item.covariateName }}
+              </span>
+            </template>
+            <template #item.conceptId="{ item }">
+              {{ item.conceptId || '—' }}
+            </template>
+            <template
+              v-for="cell in table.cells"
+              #[`item.${cell.key}`]="{ item }"
+            >
+              {{ cell.format(item) }}
+            </template>
+            <template #[`item.${stdDiffSortKey(table.partitionKey)}`]="{ item }">
+              <span :data-testid="`char-results-stddiff-${item.covariateId}-${table.partitionKey}`">
+                {{ formatStdDiff(item, table.partitionKey) }}
+              </span>
+            </template>
+            <template #item.actions="{ item }">
+              <AtlasIconButton
+                icon="mdi-magnify"
+                size="sm"
+                variant="text"
+                v-bind="{ ariaLabel: tv('columns.explore') }"
+                class="prevalence-table__explore-button"
+                :data-testid="`char-results-explore-${item.covariateId}`"
+                @click="emit('explore', sourceRow(item))"
+              />
+            </template>
+          </ResultsDataTable>
         </div>
-      </template>
-    </AtlasDataTable>
+      </div>
+    </template>
   </AtlasCard>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 import { useI18n } from '@/composables/useI18n'
-import { DEFAULT_STRATA_KEY } from '@/utils/characterization-result-mapper'
-import type { LinkedCohort, PrevalenceStat } from '@/models/characterization.types'
-import { AtlasCard, AtlasDataTable, AtlasIconButton } from '@/components/ui'
-import { useConceptDetailDrawerStore } from '@/stores/concept-detail-drawer'
-import { useDataSourcesStore } from '@/stores/datasources'
+import { computeBinaryStdDiff, DEFAULT_STRATA_KEY, strataCount } from '@/utils/characterization-result-mapper'
+import type { LinkedCohort, PrevalenceStat, StrataCounts } from '@/models/characterization.types'
+import { AtlasCard, AtlasIcon, AtlasIconButton, AtlasTooltip } from '@/components/ui'
+import { TIME_SERIES_ICONS } from '@/constants/characterization-time-series'
+import ResultsDataTable, { type ResultsHeader, type ResultsSortItem } from './ResultsDataTable.vue'
 
 interface Props {
   analysisId: number
   analysisName: string
   rows: PrevalenceStat[]
   cohorts: LinkedCohort[]
+  selectedCohortIds?: number[]
+  /** Person count per cohort and subgroup, shown as "(N=…)" in the column headers. */
+  strataCounts?: StrataCounts
+  expanded?: boolean
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  selectedCohortIds: () => [],
+  strataCounts: () => ({}),
+  expanded: true,
+})
 const emit = defineEmits<{
   (e: 'explore', row: PrevalenceStat): void
+  (e: 'update:expanded', value: boolean): void
 }>()
-
 const { tv } = useI18n()
 
-interface FlattenedRow {
-  covariateId: number
-  covariateName: string
-  conceptId: number
-  stdDiff: number | undefined
-  _row: PrevalenceStat
-  [key: string]: unknown
+// Shared by every table in the card so their rows stay aligned.
+const page = ref(1)
+const pageSize = ref(15)
+const sortBy = ref<ResultsSortItem[]>([])
+
+interface Partition { key: string; label: string }
+interface Cell { key: string; format: (row: PrevalenceStat) => string }
+interface RenderTable {
+  key: string
+  label?: string
+  partitionKey: string
+  headers: ResultsHeader[]
+  cells: Cell[]
 }
 
-function pickStratumKey(rec: Record<string, Record<string, number>>): string | null {
-  const keys = Object.keys(rec)
-  if (keys.length === 0) {
-    return null
-  }
-  return keys.includes(DEFAULT_STRATA_KEY) ? DEFAULT_STRATA_KEY : (keys[0] as string)
-}
-
-const tableRows = computed<FlattenedRow[]>(() =>
-  props.rows.map(row => {
-    const flat: FlattenedRow = {
-      covariateId: row.covariateId,
-      covariateName: row.covariateName,
-      conceptId: row.conceptId,
-      stdDiff: row.stdDiff,
-      _row: row,
-    }
-    const countKey = pickStratumKey(row.count)
-    const pctKey = pickStratumKey(row.pct)
-    for (const cohort of props.cohorts) {
-      flat[`count_${cohort.id}`] = countKey ? row.count[countKey]?.[String(cohort.id)] : undefined
-      flat[`pct_${cohort.id}`] = pctKey ? row.pct[pctKey]?.[String(cohort.id)] : undefined
-    }
-    return flat
-  })
-)
-
-const headers = computed(() => {
-  const out: {
-    title: string
-    key: string
-    sortable?: boolean
-    align?: 'start' | 'end' | 'center'
-  }[] = [
-    {
-      title: tv('columns.covariate', 'Covariate'),
-      key: 'covariateName',
-    },
-    {
-      title: tv('columns.conceptId', 'Concept ID'),
-      key: 'conceptId',
-      align: 'end',
-    },
-  ]
-  for (const cohort of props.cohorts) {
-    out.push({
-      title: `${cohort.name} · ${tv('columns.count', 'Count')}`,
-      key: `count_${cohort.id}`,
-      align: 'end',
-    })
-    out.push({
-      title: `${cohort.name} · ${tv('columns.pct', '%')}`,
-      key: `pct_${cohort.id}`,
-      align: 'end',
-    })
-  }
-  if (props.cohorts.length === 2) {
-    out.push({
-      title: tv('characterizations.results.table.stdDiff', 'Std Diff'),
-      key: 'stdDiff',
-      align: 'end',
-    })
-  }
-  out.push({
-    title: '',
-    key: 'actions',
-    sortable: false,
-    align: 'end',
-  })
-  return out
+const effectiveCohorts = computed(() => {
+  if (!props.selectedCohortIds?.length) return props.cohorts
+  return props.cohorts.filter(cohort => props.selectedCohortIds?.includes(cohort.id))
 })
 
-function formatPercent(value: unknown): string {
-  if (typeof value !== 'number' || Number.isNaN(value)) {
-    return '—'
+const comparisonMode = computed(() => effectiveCohorts.value.length === 2)
+
+function isOverall(key: string): boolean {
+  return key === DEFAULT_STRATA_KEY || key === '0'
+}
+
+const partitions = computed<Partition[]>(() => {
+  const names = new Map<string, string>()
+  for (const row of props.rows) {
+    for (const key of new Set([...Object.keys(row.count), ...Object.keys(row.pct)])) {
+      names.set(key, isOverall(key)
+        ? tv('components.characterizationTable1.overall')
+        : (row.strataNames?.[key] ?? key))
+    }
   }
-  return `${value.toFixed(2)}%`
+  return Array.from(names, ([key, label]) => ({ key, label }))
+    .sort((a, b) => Number(isOverall(b.key)) - Number(isOverall(a.key)))
+})
+
+/**
+ * Count and Pct columns for one partition and cohort. The key is the path to
+ * the value in the row (`count.<partition>.<cohort>`; strata ids are numeric),
+ * so v-data-table sorts by it directly, in every table that shares `sortBy`.
+ */
+function metricCells(partitionKey: string, cohortId: number) {
+  const metrics = [
+    { field: 'count', title: tv('columns.count'), format: formatCount },
+    { field: 'pct', title: tv('columns.pct'), format: formatPercent },
+  ] as const
+  return metrics.map(metric => ({
+    key: `${metric.field}.${partitionKey}.${cohortId}`,
+    title: metric.title,
+    align: 'end',
+    width: 112,
+    headerProps: {
+      class: 'prevalence-table__numeric prevalence-table__metric',
+      'data-testid': `char-results-sort-${metric.field}-${props.analysisId}-${partitionKey}-${cohortId}`,
+    },
+    cellProps: { class: 'prevalence-table__metric' },
+    format: (row: PrevalenceStat) => metric.format(value(row[metric.field], partitionKey, cohortId)),
+  }))
 }
 
-function formatCount(value: unknown): string {
-  if (typeof value !== 'number' || Number.isNaN(value)) {
-    return '—'
+function buildTable(key: string, label: string, partitionKey: string, groups: { title: string; cells: ReturnType<typeof metricCells> }[]): RenderTable {
+  return {
+    key,
+    label,
+    partitionKey,
+    headers: [
+      { key: 'covariateName', title: tv('columns.covariate'), sortable: false },
+      {
+        key: 'conceptId',
+        title: tv('columns.conceptId'),
+        sortable: false,
+        width: 112,
+        headerProps: { class: 'prevalence-table__concept' },
+        cellProps: { class: 'prevalence-table__concept' },
+      },
+      ...groups.map((group, index) => ({ key: `group-${index}`, title: group.title, align: 'center', children: group.cells })),
+      ...(comparisonMode.value
+        ? [{
+            key: stdDiffSortKey(partitionKey),
+            title: tv('characterizations.results.table.stdDiff'),
+            width: 72,
+            headerProps: {
+              'data-testid': `char-results-sort-stddiff-${props.analysisId}-${partitionKey}`,
+            },
+          }]
+        : []),
+      {
+        key: 'actions',
+        title: '',
+        sortable: false,
+        width: 44,
+        headerProps: { class: 'prevalence-table__action' },
+        cellProps: { class: 'prevalence-table__action' },
+      },
+    ],
+    cells: groups.flatMap(group => group.cells),
   }
-  return value.toLocaleString()
 }
 
-function formatStdDiff(value: unknown): string {
-  if (typeof value !== 'number' || Number.isNaN(value)) {
-    return '—'
+const tables = computed<RenderTable[]>(() => {
+  if (comparisonMode.value) {
+    return partitions.value.map(partition => buildTable(
+      `comparison-${partition.key}`,
+      partition.label,
+      partition.key,
+      effectiveCohorts.value.map(cohort => ({
+        title: withN(cohort.name, cohort.id, partition.key),
+        cells: metricCells(partition.key, cohort.id),
+      }))
+    ))
   }
-  return value.toFixed(4)
+  return effectiveCohorts.value.map(cohort => buildTable(
+    `cohort-${cohort.id}`,
+    cohort.name,
+    DEFAULT_STRATA_KEY,
+    partitions.value.map(partition => ({
+      title: withN(partition.label, cohort.id, partition.key),
+      cells: metricCells(partition.key, cohort.id),
+    }))
+  ))
+})
+
+function withN(label: string, cohortId: number, partitionKey: string): string {
+  const n = strataCount(props.strataCounts, cohortId, partitionKey)
+  return n === undefined
+    ? label
+    : tv('components.characterizationResults.columnWithN', { label, n: n.toLocaleString() })
 }
 
-const conceptDrawer = useConceptDetailDrawerStore()
-const dsStore = useDataSourcesStore()
+function value(
+  values: Record<string, Record<string, number>>,
+  partitionKey: string,
+  cohortId: number
+): number | undefined {
+  return values[partitionKey]?.[String(cohortId)]
+}
 
-async function openConcept(id: number): Promise<void> {
-  if (dsStore.sources.length === 0) {
-    try { await dsStore.fetchDataSources() } catch { /* ignore */ }
+function formatCount(value: number | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : '—'
+}
+
+function formatPercent(value: number | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(2)}%` : '—'
+}
+
+function stdDiffValue(row: PrevalenceStat, partitionKey: string): number | undefined {
+  const [first, second] = effectiveCohorts.value
+  if (!first || !second) return undefined
+  const diff = row.stdDiffByStrata?.[partitionKey]
+    ?? (isOverall(partitionKey) ? row.stdDiff : undefined)
+    ?? computeBinaryStdDiff(
+      value(row.pct, partitionKey, first.id),
+      value(row.pct, partitionKey, second.id)
+    )
+  return typeof diff === 'number' && Number.isFinite(diff) ? diff : undefined
+}
+
+function formatStdDiff(row: PrevalenceStat, partitionKey: string): string {
+  return stdDiffValue(row, partitionKey)?.toFixed(4) ?? '—'
+}
+
+/**
+ * Std Diff sorts by magnitude, so large imbalances group together whichever
+ * cohort they favour. The magnitude for every partition is stored on the row
+ * (like Count/Pct) so each partition's table can sort by any partition's key
+ * and the tables sharing `sortBy` stay row-aligned.
+ */
+type PrevalenceTableRow = PrevalenceStat & { stdDiffMagnitude?: Record<string, number | undefined> }
+
+function stdDiffSortKey(partitionKey: string): string {
+  return `stdDiffMagnitude.${partitionKey}`
+}
+
+const tableRows = computed<PrevalenceTableRow[]>(() => {
+  if (!comparisonMode.value) return props.rows
+  return props.rows.map(row => ({
+    ...row,
+    stdDiffMagnitude: Object.fromEntries(partitions.value.map(partition => {
+      const diff = stdDiffValue(row, partition.key)
+      return [partition.key, diff === undefined ? undefined : Math.abs(diff)]
+    })),
+  }))
+})
+
+const sourceRows = computed(() => new Map(props.rows.map(row => [row.covariateId, row])))
+
+function sourceRow(row: PrevalenceTableRow): PrevalenceStat {
+  return sourceRows.value.get(row.covariateId) ?? row
+}
+
+type TimeSeriesKind = 'annual' | 'temporal'
+
+const TIME_SERIES = {
+  annual: { icon: TIME_SERIES_ICONS.annual, labelKey: 'components.characterizationResults.annualAvailable' },
+  temporal: { icon: TIME_SERIES_ICONS.temporal, labelKey: 'components.characterizationResults.temporalAvailable' },
+} as const satisfies Record<TimeSeriesKind, { icon: string; labelKey: string }>
+
+// Annual / temporal output is enabled per analysis, so it is flagged once on
+// the analysis heading rather than on every covariate row.
+const timeSeriesKinds = computed<TimeSeriesKind[]>(() => {
+  let annual = false
+  let temporal = false
+  for (const row of props.rows) {
+    for (const cohort of effectiveCohorts.value) {
+      const data = row.temporalByCohort?.[String(cohort.id)]
+      if (data?.temporalAnnual.length) annual = true
+      if (data?.temporal.length) temporal = true
+    }
+    if (annual && temporal) break
   }
-  const sourceKey = dsStore.sources[0]?.sourceKey
-  if (sourceKey) conceptDrawer.open(sourceKey, id)
-}
-
-function onExplore(row: PrevalenceStat): void {
-  emit('explore', row)
-}
+  return [...(annual ? ['annual' as const] : []), ...(temporal ? ['temporal' as const] : [])]
+})
 </script>
 
 <style scoped>
-.prevalence-table {
-  margin-bottom: 16px;
-}
-
-.prevalence-table__header {
-  padding: 20px 20px 12px;
-}
-
-.prevalence-table__eyebrow-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 6px;
-}
-
-.prevalence-table__accent-rule {
-  display: inline-block;
-  width: 28px;
-  height: 2px;
-  background-color: rgb(var(--v-theme-orange));
-  border-radius: 2px;
-}
-
-.prevalence-table__title {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 18px;
-  font-weight: 500;
-  line-height: 1.3;
-  margin: 0;
-  color: rgb(var(--v-theme-primary));
-}
-
-.prevalence-table__count {
-  font-size: 0.85rem;
-  color: rgba(var(--v-theme-on-surface), 0.6);
-  font-weight: 400;
-}
-
-.prevalence-table__concept-link {
-  color: rgb(var(--v-theme-primary));
-  text-decoration: none;
-}
-
-.prevalence-table__concept-link:hover {
-  text-decoration: underline;
-}
-
-.prevalence-table__empty {
-  padding: 24px;
-  text-align: center;
-  color: rgba(var(--v-theme-on-surface), 0.6);
-}
+.prevalence-table { margin-bottom: 16px; }
+.prevalence-table__header { padding: 20px 20px 12px; }
+.prevalence-table__eyebrow-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.prevalence-table__toggle { background: transparent; border: 0; cursor: pointer; padding: 0; }
+.prevalence-table__toggle:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
+.prevalence-table__chevron { color: rgba(var(--v-theme-on-surface), 0.62); transition: transform 0.15s ease; }
+.prevalence-table__chevron--collapsed { transform: rotate(-90deg); }
+.prevalence-table__accent-rule { width: 28px; height: 2px; background-color: rgb(var(--v-theme-orange)); }
+.prevalence-table__title { display: flex; align-items: baseline; gap: 8px; font-size: 18px; font-weight: 500; margin: 0; color: rgb(var(--v-theme-primary)); }
+.prevalence-table__count { font-size: 0.85rem; color: rgba(var(--v-theme-on-surface), 0.6); font-weight: 400; }
+.prevalence-table__wrap { overflow-x: auto; padding: 0 20px 20px; }
+.prevalence-table__partition-title { font-size: 13px; margin: 0 0 8px; }
+.prevalence-table__table :deep(table) { table-layout: fixed; width: 100%; }
+.prevalence-table__table :deep(.prevalence-table__action) { padding-left: 0 !important; padding-right: 0 !important; text-align: center !important; }
+.prevalence-table :deep(.prevalence-table__explore-button) { height: 24px; min-width: 24px; padding: 0; width: 24px; }
+.prevalence-table :deep(.prevalence-table__explore-button .v-icon) { font-size: 16px; }
+.prevalence-table__covariate { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prevalence-table__time-series { color: rgb(var(--v-theme-primary)); display: inline-flex; }
 </style>

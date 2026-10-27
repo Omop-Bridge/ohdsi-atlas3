@@ -4,16 +4,16 @@
     data-testid="ir-insights-rail"
   >
     <div class="ir-insights__label">
-      {{ t('ir.workbench.rateSummary', 'Rate summary').value }}
+      {{ t('ir.workbench.rateSummary').value }}
     </div>
 
     <div
       class="ir-insights__kpi"
       data-testid="ir-kpi"
-      :title="tv('components.incidenceRate.personsAtRiskTooltip', 'Persons at risk in the target cohort during the time-at-risk window')"
+      :title="tv('components.incidenceRate.personsAtRiskTooltip')"
     >
       <div class="k-label">
-        {{ t('components.incidenceRate.personsAtRisk', 'Persons at risk').value }}
+        {{ t('components.incidenceRate.personsAtRisk').value }}
       </div>
       <div class="k-val">
         {{ format(report.summary.totalPersons) }}
@@ -22,10 +22,10 @@
     <div
       class="ir-insights__kpi"
       data-testid="ir-kpi"
-      :title="tv('components.incidenceRate.outcomeCasesTooltip', 'Persons who had the outcome during follow-up ({proportion})', { proportion: propPct })"
+      :title="tv('components.incidenceRate.outcomeCasesTooltip', { proportion: propPct })"
     >
       <div class="k-label">
-        {{ t('components.incidenceRate.outcomeCases', 'Outcome cases').value }}
+        {{ t('components.incidenceRate.outcomeCases').value }}
       </div>
       <div class="k-val">
         {{ format(report.summary.cases) }}
@@ -37,28 +37,28 @@
     <div
       class="ir-insights__kpi"
       data-testid="ir-kpi"
-      :title="tv('components.incidenceRate.personYearsTooltip', 'Total person-time observed across all persons, measured in person-years')"
+      :title="tv('components.incidenceRate.personYearsTooltip')"
     >
       <div class="k-label">
-        {{ t('components.incidenceRate.personYearsAtRisk', 'Person-years at risk').value }}
+        {{ t('components.incidenceRate.personYearsAtRisk').value }}
       </div>
       <div class="k-val">
-        {{ formatYears(report.summary.timeAtRisk) }}
+        {{ format(report.summary.timeAtRisk) }}
       </div>
     </div>
     <div
       class="ir-insights__kpi"
       data-testid="ir-kpi"
-      :title="tv('components.incidenceRate.incidenceRateTooltip', 'Incidence rate: {cases} cases per {years} person-years, scaled by {multiplier}', { cases: format(report.summary.cases), years: formatYears(report.summary.timeAtRisk), multiplier: multiplier.toLocaleString() })"
+      :title="tv('components.incidenceRate.incidenceRateTooltip', { cases: format(report.summary.cases), years: format(report.summary.timeAtRisk), multiplier: multiplier.toLocaleString() })"
     >
       <div class="k-label">
-        {{ tv('components.incidenceRate.incidenceRatePerPy', 'Incidence rate per {multiplier} PY', { multiplier: multiplier.toLocaleString() }) }}
+        {{ tv('components.incidenceRate.incidenceRatePerPy', { multiplier: multiplier.toLocaleString() }) }}
       </div>
       <div class="k-val k-val--accent">
         {{ rate(report.summary.rate) }}
       </div>
       <div class="k-hint">
-        {{ t('components.incidenceRate.notComparable', 'Not comparable across outcomes').value }}
+        {{ t('components.incidenceRate.notComparable').value }}
       </div>
     </div>
 
@@ -67,7 +67,7 @@
       data-testid="ir-kpi-donut"
     >
       <div class="k-label">
-        {{ t('ir.results.proportion', 'Cases vs Non-Cases').value }}
+        {{ t('ir.results.proportion').value }}
       </div>
       <div class="ir-insights__donut-wrap">
         <svg
@@ -106,7 +106,7 @@
 
     <template v-if="report.stratifyStats.length > 0">
       <div class="ir-insights__label">
-        {{ t('ir.results.stratifyRule', 'Stratification').value }}
+        {{ t('ir.results.stratifyRule').value }}
       </div>
       <table
         class="ir-insights__strata"
@@ -114,12 +114,12 @@
       >
         <thead>
           <tr>
-            <th>{{ t('ir.results.stratifyRule', 'Stratum').value }}</th>
+            <th>{{ t('ir.results.stratifyRule').value }}</th>
             <th class="num">
-              {{ t('ir.results.cases', 'Cases').value }}
+              {{ t('ir.results.cases').value }}
             </th>
             <th class="num">
-              {{ t('ir.results.rate', 'Rate').value }}
+              {{ t('ir.results.rate').value }}
             </th>
           </tr>
         </thead>
@@ -133,7 +133,7 @@
               {{ format(r.cases) }}
             </td>
             <td class="num">
-              {{ rate(r.cases / Math.max(r.timeAtRisk / 365.25, 1)) }}
+              {{ rate(r.cases / Math.max(r.timeAtRisk, 1)) }}
             </td>
           </tr>
         </tbody>
@@ -152,14 +152,14 @@ const { t, tv } = useI18n()
 
 const sortedStrata = computed(() =>
   [...props.report.stratifyStats].sort((a, b) => {
-    const ra = a.cases / Math.max(a.timeAtRisk / 365.25, 1)
-    const rb = b.cases / Math.max(b.timeAtRisk / 365.25, 1)
+    const ra = a.cases / Math.max(a.timeAtRisk, 1)
+    const rb = b.cases / Math.max(b.timeAtRisk, 1)
     return rb - ra
   })
 )
 
 const propPct = computed(() =>
-  tv('components.incidenceRate.percentProportion', '{value}% proportion', {
+  tv('components.incidenceRate.percentProportion', {
     value: (props.report.summary.proportion * 100).toFixed(1),
   })
 )
@@ -175,9 +175,6 @@ const casesArc = computed(() => {
 
 function format(n: number | null | undefined) {
   return n == null ? '—' : Math.round(n).toLocaleString()
-}
-function formatYears(days: number | null | undefined) {
-  return days == null ? '—' : Math.round(days / 365.25).toLocaleString()
 }
 function rate(r: number) {
   return (r * props.multiplier).toFixed(2)

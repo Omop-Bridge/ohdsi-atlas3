@@ -1,29 +1,11 @@
 <template>
-  <v-app>
+  <v-app :style="{ '--atlas-nav-height': showNavBar ? '60px' : '0px' }">
     <a
       href="#main"
       class="skip-link"
     >
-      {{ t('a11y.skipToMain', 'Skip to main content') }}
+      {{ t('a11y.skipToMain') }}
     </a>
-
-    <!-- Initial loading overlay while translations load -->
-    <v-overlay
-      v-model="isInitializing"
-      persistent
-      class="align-center justify-center"
-    >
-      <div class="text-center">
-        <AtlasProgressCircular
-          indeterminate
-          size="64"
-          color="primary"
-        />
-        <div class="mt-4 text-h6">
-          {{ t('common.loading', 'Loading...') }}
-        </div>
-      </div>
-    </v-overlay>
 
     <NavBar v-if="showNavBar" />
 
@@ -72,6 +54,9 @@
     <!-- Concept set chooser opened by plugins over the host message bus -->
     <PluginConceptSetChooserHost />
 
+    <!-- Concept set editor drawer opened by plugins over the host message bus -->
+    <PluginConceptSetEditorHost />
+
     <!-- Pythia (Atlas3 cohort design advisor) — global FAB + overlay,
          gated on auth + feature flag. -->
     <template v-if="pythiaEnabled && authStore.isAuthenticated">
@@ -82,7 +67,7 @@
 </template>
 
 <script setup lang="ts">
-import { AtlasProgressCircular, AtlasNotificationHost } from '@/components/ui'
+import { AtlasNotificationHost } from '@/components/ui'
 import { computed, ref, onMounted } from 'vue'
 import NavBar from '@/components/shared/NavBar.vue'
 import SessionExpiryModal from '@/components/auth/SessionExpiryModal.vue'
@@ -93,9 +78,9 @@ import JobsPanel from '@/components/jobs/JobsPanel.vue'
 import { useTrexSQLCache } from '@/composables/useTrexSQLCache'
 import ConceptDetailDrawer from '@/components/concepts/detail/ConceptDetailDrawer.vue'
 import PluginConceptSetChooserHost from '@/components/plugins/PluginConceptSetChooserHost.vue'
+import PluginConceptSetEditorHost from '@/components/plugins/PluginConceptSetEditorHost.vue'
 import PluginFab from '@/components/plugins/PluginFab.vue'
 import PluginOverlayHost from '@/components/plugins/PluginOverlayHost.vue'
-import { useLocaleStore } from '@/stores/locale'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from '@/composables/useI18n'
 import { useLicenseAgreement } from '@/composables/useLicenseAgreement'
@@ -103,17 +88,10 @@ import { pluginConfigService } from '@/services/PluginConfigService'
 import { getAppConfig } from '@/config/app-config.loader'
 import { logger } from '@/utils/logger'
 
-const localeStore = useLocaleStore()
 const authStore = useAuthStore()
 const { t } = useI18n()
 const { showLicenseDialog, acceptLicense, rejectLicense, checkLicenseStatus } =
   useLicenseAgreement()
-
-// Show overlay while initial translations are loading
-const isInitializing = computed(() => {
-  // Only show during initial load (when no translations are loaded yet)
-  return localeStore.loading && Object.keys(localeStore.translations).length === 0
-})
 
 const showNavBar = ref(true)
 

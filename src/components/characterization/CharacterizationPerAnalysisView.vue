@@ -1,40 +1,51 @@
 <template>
   <div class="char-per-analysis">
-    <PrevalenceTable
-      v-for="g in prevalenceGroups"
-      :key="`prev-${g.analysisId}`"
-      :analysis-id="g.analysisId"
-      :analysis-name="g.analysisName"
-      :rows="g.rows"
-      :cohorts="g.cohorts"
-      @explore="(row) => $emit('explore', row)"
-    />
-    <DistributionTable
-      v-for="g in distributionGroups"
-      :key="`dist-${g.analysisId}`"
-      :analysis-id="g.analysisId"
-      :analysis-name="g.analysisName"
-      :rows="g.rows"
-      :cohorts="g.cohorts"
-    />
+    <section
+      v-for="group in analysisGroups"
+      :key="group.analysisId"
+      class="char-per-analysis__group"
+    >
+      <PrevalenceTable
+        v-if="group.prevalence"
+        :analysis-id="group.analysisId"
+        :analysis-name="group.analysisName"
+        :rows="group.prevalence.rows"
+        :cohorts="group.prevalence.cohorts"
+        :selected-cohort-ids="selectedCohortIds"
+        :strata-counts="strataCounts"
+        :expanded="isAnalysisExpanded(group.analysisId)"
+        @update:expanded="setAnalysisExpanded(group.analysisId, $event)"
+        @explore="(row) => $emit('explore', row)"
+      />
+      <DistributionTable
+        v-if="group.distribution"
+        :analysis-id="group.analysisId"
+        :analysis-name="group.analysisName"
+        :rows="group.distribution.rows"
+        :cohorts="group.distribution.cohorts"
+        :strata-counts="strataCounts"
+        :expanded="isAnalysisExpanded(group.analysisId)"
+        @update:expanded="setAnalysisExpanded(group.analysisId, $event)"
+      />
+    </section>
     <div
       v-if="prevalenceGroups.length === 0 && distributionGroups.length === 0"
       class="char-per-analysis__empty"
     >
-      {{ tv('common.noData', 'No rows match the current filter.') }}
+      {{ tv('cc.viewEdit.workbench.empty.noDataTitle') }}
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { matchesTerms } from '@/utils/list-filters'
 import PrevalenceTable from '@/components/characterization-results/PrevalenceTable.vue'
 import DistributionTable from '@/components/characterization-results/DistributionTable.vue'
 import { DEFAULT_STRATA_KEY } from '@/utils/characterization-result-mapper'
 import type {
-  DistributionStat, LinkedCohort, PrevalenceStat,
+  DistributionStat, LinkedCohort, PrevalenceStat, StrataCounts,
 } from '@/models/characterization.types'
 
 const props = defineProps<{
@@ -44,13 +55,28 @@ const props = defineProps<{
   threshold: number
   selectedAnalysisIds: number[]
   selectedDomains: string[]
-  selectedCohortId: number | null
+  selectedCohortIds: number[]
   /** Free text narrowing the covariate rows; empty keeps them all (#327). */
   search?: string
+  strataCounts?: StrataCounts
 }>()
 
 defineEmits<{ explore: [row: PrevalenceStat] }>()
 const { tv } = useI18n()
+const collapsedAnalysisIds = ref<number[]>([])
+
+function isAnalysisExpanded(analysisId: number): boolean {
+  return !collapsedAnalysisIds.value.includes(analysisId)
+}
+
+function setAnalysisExpanded(analysisId: number, expanded: boolean): void {
+  const isCollapsed = collapsedAnalysisIds.value.includes(analysisId)
+  if (expanded && isCollapsed) {
+    collapsedAnalysisIds.value = collapsedAnalysisIds.value.filter(id => id !== analysisId)
+  } else if (!expanded && !isCollapsed) {
+    collapsedAnalysisIds.value = [...collapsedAnalysisIds.value, analysisId]
+  }
+}
 
 function pickStratumKey(rec: Record<string, Record<string, number>>): string | null {
   const keys = Object.keys(rec)
@@ -78,8 +104,8 @@ function passesSearch(row: { covariateName: string; conceptName?: string }) {
   return matchesTerms([row.covariateName, row.conceptName], props.search)
 }
 function filterCohorts(list: LinkedCohort[]): LinkedCohort[] {
-  if (props.selectedCohortId === null) return list
-  const f = list.filter(c => c.id === props.selectedCohortId)
+  if (props.selectedCohortIds.length === 0) return list
+  const f = list.filter(c => props.selectedCohortIds.includes(c.id))
   return f.length ? f : list
 }
 
@@ -119,10 +145,34 @@ const distributionGroups = computed<Group<DistributionStat>[]>(() => {
   }
   return Array.from(groups.values())
 })
+
+const analysisGroups = computed(() => {
+  const groups = new Map<number, {
+    analysisId: number
+    analysisName: string
+    prevalence?: Group<PrevalenceStat>
+    distribution?: Group<DistributionStat>
+  }>()
+  for (const group of prevalenceGroups.value) {
+    groups.set(group.analysisId, { ...group, prevalence: group })
+  }
+  for (const group of distributionGroups.value) {
+    const existing = groups.get(group.analysisId)
+    if (existing) {
+      existing.distribution = group
+    } else {
+      groups.set(group.analysisId, { ...group, distribution: group })
+    }
+  }
+  return Array.from(groups.values())
+})
 </script>
 
 <style scoped>
-.char-per-analysis { display: flex; flex-direction: column; gap: 16px; }
+.char-per-analysis { display: flex; flex-direction: column; gap: 8px; }
+.char-per-analysis__group { display: flex; flex-direction: column; gap: 8px; margin: 0; }
+.char-per-analysis :deep(.prevalence-table),
+.char-per-analysis :deep(.distribution-table) { margin-bottom: 0; }
 .char-per-analysis__empty {
   padding: 32px; text-align: center;
   color: rgba(var(--v-theme-on-surface), 0.6); font-size: 13px;

@@ -1,15 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
-import { vuetify, pristinePinia } from './_test-helpers'
 import IncidenceRateBuilder from '@/components/incidence-rate/IncidenceRateBuilder.vue'
 import { useConceptSetsStore } from '@/stores/concept-sets'
 import { useIncidenceRateStore } from '@/stores/incidence-rate'
+import { tr } from '../../helpers/i18n-mock'
+import { vuetify, pristinePinia } from './_test-helpers'
+
+vi.mock('@/composables/useI18n', async () => {
+  const { mockUseI18n } = await import('../../helpers/i18n-mock')
+  return mockUseI18n
+})
 
 const builderMocks = vi.hoisted(() => ({
   save: vi.fn(),
-  copy: vi.fn(),
-  remove: vi.fn(),
   feedback: { value: null as { message: string; color: 'success' | 'error' | 'info' } | null },
 }))
 
@@ -28,8 +32,6 @@ const accessMocks = vi.hoisted(() => ({
 vi.mock('@/composables/useIncidenceRateBuilder', () => ({
   useIncidenceRateBuilder: () => ({
     save: builderMocks.save,
-    copy: builderMocks.copy,
-    remove: builderMocks.remove,
     feedback: builderMocks.feedback,
   }),
 }))
@@ -39,7 +41,7 @@ vi.mock('@/composables/usePermissions', () => ({
 }))
 
 vi.mock('@/composables/useEntityAccess', () => ({
-  useEntityAccess: () => ({ canWrite: { value: true }, canDelete: { value: true } }),
+  useEntityAccess: () => ({ canWrite: { value: true } }),
 }))
 
 vi.mock('@/services/incidence-rate.service', () => ({
@@ -66,6 +68,7 @@ const stubs = [
   'EntityAccessDialog',
   'IncidenceRateConceptSetsPanel',
   'IncidenceRateVersionsPanel',
+  'ConceptSetEditor',
   'AtlasDialog',
 ]
 
@@ -103,13 +106,27 @@ describe('IncidenceRateBuilder', () => {
     expect(w.findComponent({ name: 'IncidenceRateWorkbench' }).exists()).toBe(true)
   })
 
+  it('counts only directly assigned tags in the manage-tags badge', async () => {
+    const store = loadIR()
+    store.currentIR!.tags = [
+      { id: 17, name: 'test', groups: [] },
+      { id: 18, name: 'Some Tag', groups: [{ id: 17, name: 'test' }] },
+    ]
+    const w = mount(IncidenceRateBuilder, {
+      global: { plugins: [vuetify, router], stubs },
+    })
+    await flushPromises()
+
+    expect(w.find('[data-testid="ir-builder-tags-badge"] .v-badge__badge').text()).toBe('1')
+  })
+
   it('renders the shell fallback when no IR is loaded', async () => {
     const w = mount(IncidenceRateBuilder, {
       global: { plugins: [vuetify, router], stubs },
     })
     await flushPromises()
 
-    expect(w.findComponent({ name: 'AnalysisBuilderShell' }).props('title')).toBe('Incidence rate analysis')
+    expect(w.findComponent({ name: 'AnalysisBuilderShell' }).props('title')).toBe(tr('ir.editor.analysisTitle'))
     expect(w.find('[data-testid="ir-builder-name"]').exists()).toBe(false)
     expect(w.find('[data-testid="ir-builder-description"]').exists()).toBe(false)
     expect(w.findComponent({ name: 'IncidenceRateWorkbench' }).exists()).toBe(false)
@@ -138,12 +155,28 @@ describe('IncidenceRateBuilder', () => {
     )
   })
 
-  it('routes back and forwards save/copy/delete actions to the builder composable', async () => {
+  it('disables Save and explains why when the draft has no name', async () => {
+    const store = useIncidenceRateStore()
+    store.createNewIR()
+    store.addTargetCohortId(1, 'Target')
+    const w = mount(IncidenceRateBuilder, {
+      global: { plugins: [vuetify, router], stubs },
+    })
+    await flushPromises()
+
+    expect(w.get('[data-testid="ir-builder-save"]').attributes('disabled')).toBeDefined()
+    expect((w.vm as unknown as { saveDisabledReason: string }).saveDisabledReason).toMatch(/name/i)
+
+    store.updateMeta({ name: 'Named draft' })
+    await w.vm.$nextTick()
+    expect(w.get('[data-testid="ir-builder-save"]').attributes('disabled')).toBeUndefined()
+    expect((w.vm as unknown as { saveDisabledReason: string }).saveDisabledReason).toBe('')
+  })
+
+  it('routes back and forwards save actions to the builder composable', async () => {
     const store = loadIR()
     const pushSpy = vi.spyOn(router, 'push')
     builderMocks.save.mockResolvedValue(true)
-    builderMocks.copy.mockResolvedValue(true)
-    builderMocks.remove.mockResolvedValue(true)
 
     const w = mount(IncidenceRateBuilder, {
       global: { plugins: [vuetify, router], stubs },
@@ -154,13 +187,12 @@ describe('IncidenceRateBuilder', () => {
 
     await w.get('[data-testid="ir-builder-cancel"]').trigger('click')
     await w.get('[data-testid="ir-builder-save"]').trigger('click')
-    await w.get('[data-testid="ir-builder-copy"]').trigger('click')
-    await w.get('[data-testid="ir-builder-delete"]').trigger('click')
     await flushPromises()
 
     expect(pushSpy).toHaveBeenCalledWith('/analysis/incidence-rates')
     expect(builderMocks.save).toHaveBeenCalled()
-    expect(builderMocks.copy).toHaveBeenCalled()
+    expect(w.find('[data-testid="ir-builder-delete"]').exists()).toBe(false)
+    expect(w.find('[data-testid="ir-builder-copy"]').exists()).toBe(false)
     expect(store.currentIR?.id).toBe(42)
   })
 
@@ -190,7 +222,7 @@ describe('IncidenceRateBuilder', () => {
     await flushPromises()
 
     await (w.vm as any).$.setupState.handleExport()
-    expect(builderMocks.feedback.value?.message).toBe('Export failed')
+    expect(builderMocks.feedback.value?.message).toBe(tr('commonErrors.exportFailed'))
     expect(builderMocks.feedback.value?.color).toBe('error')
 
     const importedFile = { text: async () => JSON.stringify({ name: 'Imported' }) }
@@ -199,24 +231,6 @@ describe('IncidenceRateBuilder', () => {
 
     expect(serviceMocks.importIncidenceRate).toHaveBeenCalled()
     expect(pushSpy).not.toHaveBeenCalled()
-  })
-
-  it('confirms deletion through the incidence-rate delete dialog', async () => {
-    loadIR()
-    builderMocks.remove.mockResolvedValue(true)
-
-    const w = mount(IncidenceRateBuilder, {
-      global: { plugins: [vuetify, router], stubs },
-    })
-    await flushPromises()
-
-    await w.get('[data-testid="ir-builder-delete"]').trigger('click')
-    await flushPromises()
-
-    await (w.vm as any).$.setupState.onDelete()
-    await flushPromises()
-
-    expect(builderMocks.remove).toHaveBeenCalled()
   })
 
   it('handles concept-set helper branches with real items and both delete paths', async () => {
@@ -265,6 +279,7 @@ describe('IncidenceRateBuilder', () => {
     setupState.$.setupState.handleViewConceptSet({ id: undefined, name: 'New set', items: [] })
     expect(openEmbeddedEditorSpy).toHaveBeenCalledWith({ id: undefined, name: 'New set', items: [] })
 
+    store.markClean()
     setupState.$.setupState.handleConceptSetApplied({
       name: 'Applied set',
       items: [
@@ -285,24 +300,29 @@ describe('IncidenceRateBuilder', () => {
         },
       ],
     })
+    expect(store.isDirty).toBe(true)
 
     setupState.$.setupState.handleDeleteConceptSet({ id: 'bad' as any, name: 'Ignored set', items: [] })
 
+    store.markClean()
     setupState.$.setupState.handleDeleteConceptSet({ id: 11, name: 'Used set', items: [] })
     await flushPromises()
     setupState.$.setupState.confirmDeleteConceptSet()
     expect(store.currentIR!.expression.ConceptSets.find(set => set.id === 11)).toBeUndefined()
+    expect(store.isDirty).toBe(true)
 
     setupState.$.setupState.cancelDeleteConceptSet()
 
     store.currentIR!.expression.ConceptSets.push({ id: 22, name: 'Unused set', expression: { items: [] } } as never)
+    store.markClean()
     setupState.$.setupState.handleDeleteConceptSet({ id: 22, name: 'Unused set', items: [] })
     expect(store.currentIR!.expression.ConceptSets.find(set => set.id === 22)).toBeUndefined()
+    expect(store.isDirty).toBe(true)
   })
 
-  it('opens the tags dialog and syncs updates back to the store', async () => {
+  it('persists tag changes when the dialog applies them', async () => {
     const store = loadIR()
-    const syncSpy = vi.spyOn(store, 'syncTags').mockResolvedValue(undefined)
+    const syncSpy = vi.spyOn(store, 'syncTags').mockResolvedValue(true)
 
     const w = mount(IncidenceRateBuilder, {
       global: { plugins: [vuetify, router], stubs },
@@ -313,7 +333,8 @@ describe('IncidenceRateBuilder', () => {
     const dialog = w.findComponent({ name: 'TagSelectionDialog' })
     expect(dialog.exists()).toBe(true)
 
-    await dialog.vm.$emit('update:selected-tags', [{ id: 1, name: 'trial' }])
+    const onApply = dialog.props('onApply') as (tags: Array<{ id: number; name: string }>) => Promise<boolean>
+    await expect(onApply([{ id: 1, name: 'trial' }])).resolves.toBe(true)
     expect(syncSpy).toHaveBeenCalledWith([{ id: 1, name: 'trial' }])
   })
 
@@ -329,6 +350,20 @@ describe('IncidenceRateBuilder', () => {
     await flushPromises()
 
     expect(w.findComponent({ name: 'EntityAccessDialog' }).props('modelValue')).toBe(true)
+  })
+
+  it('closes the embedded concept-set editor when it is dismissed', async () => {
+    loadIR()
+    const conceptSetsStore = useConceptSetsStore()
+    conceptSetsStore.openCreateEditor()
+
+    const w = mount(IncidenceRateBuilder, {
+      global: { plugins: [vuetify, router], stubs },
+    })
+    await flushPromises()
+
+    await w.findComponent({ name: 'ConceptSetEditor' }).vm.$emit('update:modelValue', false)
+    expect(conceptSetsStore.editorOpen).toBe(false)
   })
 
   it('exports and imports incidence rate designs through the file handlers', async () => {

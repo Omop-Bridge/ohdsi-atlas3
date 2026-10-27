@@ -3,19 +3,35 @@
  * Manages CDM sources and generation jobs
  */
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
+import { useAuthStore } from '@/stores/auth'
+import { useSourceAccessFor } from '@/composables/useEntityAccess'
 import type { CDMSource, GenerationJob, CohortGenerationInfoList } from '@/models/webapi.types'
+import { isGenerationActive } from '@/models/webapi.types'
 import { fetchCDMSources } from '@/services/source.service'
-import { generateCohort as generateCohortRequest, getCohortGenerationInfo } from '@/services/cohort-definition.service'
+import {
+  cancelCohortGeneration as cancelCohortGenerationRequest,
+  generateCohort as generateCohortRequest,
+  getCohortGenerationInfo,
+} from '@/services/cohort-definition.service'
 import { useExecutionPolling } from '@/composables/useExecutionPolling'
 import { logger } from '@/utils/logger'
+import { useI18n } from '@/composables/useI18n'
+
+const SELECTION_STORAGE_KEYS = ['selectedVocabulary', 'selectedEvidence', 'selectedResults']
 
 export const useWebAPIStore = defineStore('webapi', () => {
+  const { tv } = useI18n()
   // State
   const sources = ref<CDMSource[]>([])
   const selectedSource = ref<string | null>(null)
   const generationJobs = ref<Map<number, GenerationJob>>(new Map())
   const isLoadingSources = ref(false)
+
+  const authStore = useAuthStore()
+  const sourceAccess = useSourceAccessFor()
+  // admin:source can list sources it cannot query, so selection must only consider readable ones.
+  const isReadable = (s: CDMSource) => sourceAccess.canRead(s.sourceId)
 
   // Getters
   const sourcesList = computed(() => sources.value)
@@ -26,9 +42,7 @@ export const useWebAPIStore = defineStore('webapi', () => {
   })
 
   const activeJobs = computed(() => {
-    return Array.from(generationJobs.value.values()).filter(
-      job => job.status === 'PENDING' || job.status === 'RUNNING'
-    )
+    return Array.from(generationJobs.value.values()).filter(job => isGenerationActive(job.status))
   })
 
   function getJobById(id: number): GenerationJob | undefined {
@@ -42,7 +56,9 @@ export const useWebAPIStore = defineStore('webapi', () => {
   }
 
   const vocabularySources = computed(() => {
-    return sources.value.filter(s => s.daimons?.some(d => d.daimonType === 'Vocabulary'))
+    return sources.value.filter(
+      s => isReadable(s) && s.daimons?.some(d => d.daimonType === 'Vocabulary')
+    )
   })
 
   /**
@@ -51,7 +67,9 @@ export const useWebAPIStore = defineStore('webapi', () => {
    * they occur in that data.
    */
   const resultsSources = computed(() => {
-    return sources.value.filter(s => s.daimons?.some(d => d.daimonType === 'Results'))
+    return sources.value.filter(
+      s => isReadable(s) && s.daimons?.some(d => d.daimonType === 'Results')
+    )
   })
 
   /** Returns validated vocabulary source key, auto-correcting invalid localStorage values */
@@ -70,7 +88,7 @@ export const useWebAPIStore = defineStore('webapi', () => {
       logger.warn('WebAPIStore', 'Stored vocabulary source not found', { stored: storedVocab })
     }
 
-    const firstVocabSource = vocabularySources.value[0]
+    const firstVocabSource = priorityDefault('Vocabulary')
     if (firstVocabSource) {
       localStorage.setItem('selectedVocabulary', firstVocabSource.sourceKey)
       return firstVocabSource.sourceKey
@@ -79,13 +97,55 @@ export const useWebAPIStore = defineStore('webapi', () => {
     return null
   }
 
+  /** Highest daimon priority of the given type wins; list order breaks ties. */
+  function priorityDefault(daimonType: string): CDMSource | undefined {
+    const priorityOf = (s: CDMSource) =>
+      Math.max(...s.daimons.filter(d => d.daimonType === daimonType).map(d => d.priority ?? 0))
+    return sources.value
+      .filter(s => isReadable(s) && s.daimons?.some(d => d.daimonType === daimonType))
+      .reduce<CDMSource | undefined>(
+        (best, s) => (!best || priorityOf(s) > priorityOf(best) ? s : best),
+        undefined
+      )
+  }
+
+  /** Drops stored selections the current user can no longer see so defaults apply again. */
+  function reconcileStoredSelections(): void {
+    const stored: Array<[string, string]> = [
+      ['selectedVocabulary', 'Vocabulary'],
+      ['selectedEvidence', 'CEM'],
+      ['selectedResults', 'Results'],
+    ]
+    for (const [storageKey, daimonType] of stored) {
+      const value = localStorage.getItem(storageKey)
+      if (!value) continue
+      const visible = sources.value.some(
+        s =>
+          s.sourceKey === value &&
+          isReadable(s) &&
+          s.daimons?.some(d => d.daimonType === daimonType)
+      )
+      if (!visible) {
+        logger.info('WebAPIStore', 'Stored source no longer available, resetting', {
+          storageKey,
+          value,
+        })
+        localStorage.removeItem(storageKey)
+      }
+    }
+  }
+
   // Actions
   function setSources(sourcesList: CDMSource[]) {
     sources.value = sourcesList
-    // Auto-select first source if none selected
-    if (!selectedSource.value && sourcesList.length > 0) {
-      selectedSource.value = sourcesList[0]?.sourceKey ?? null
-      logger.debug('WebAPIStore', 'Auto-selected first source', {
+    // An empty list is usually a failed fetch; keep the user's choices.
+    if (sourcesList.length === 0) return
+    reconcileStoredSelections()
+    const stillVisible = sourcesList.some(s => s.sourceKey === selectedSource.value && isReadable(s))
+    if (!stillVisible) {
+      selectedSource.value =
+        priorityDefault('Results')?.sourceKey ?? sourcesList.find(isReadable)?.sourceKey ?? null
+      logger.debug('WebAPIStore', 'Auto-selected default source', {
         selected: selectedSource.value,
         sources: sourcesList.map(s => s.sourceKey),
       })
@@ -138,6 +198,27 @@ export const useWebAPIStore = defineStore('webapi', () => {
       setLoadingSources(false)
     }
   }
+
+  /** True when any tracked selection (stored or in-memory) is a known source the user can no longer read. */
+  function hasLostSelectedSourceAccess(): boolean {
+    const keys = [
+      selectedSource.value,
+      ...SELECTION_STORAGE_KEYS.map(k => localStorage.getItem(k)),
+    ]
+    return keys.some(key => {
+      const source = key ? sources.value.find(s => s.sourceKey === key) : undefined
+      return !!source && !isReadable(source)
+    })
+  }
+
+  // The user/me poll replaces permissions and entityAccess each cycle, so this runs
+  // every refresh but only fetches when a selected source lost read access or the user changed.
+  watch(
+    [() => authStore.user?.login ?? null, () => authStore.permissions, () => authStore.entityAccess],
+    ([login], [previousLogin]) => {
+      if (login !== previousLogin || hasLostSelectedSourceAccess()) void fetchSources()
+    }
+  )
 
   /**
    * Generate cohort for a specific data source.
@@ -205,12 +286,26 @@ export const useWebAPIStore = defineStore('webapi', () => {
           cohortDefinitionId: cohortId,
           sourceKey,
           status: 'FAILED',
-          failMessage: error instanceof Error ? error.message : 'Generation failed',
+          failMessage: error instanceof Error ? error.message : tv('cohortDefinitions.generation.failed'),
         })
       }
       logger.error('WebAPIStore', 'Failed to generate cohort', error)
       return null
     }
+  }
+
+  async function cancelCohortGeneration(cohortId: number, sourceKey: string): Promise<void> {
+    const result = await cancelCohortGenerationRequest(cohortId, sourceKey)
+    if (!result.success) {
+      logger.error('WebAPIStore', 'Failed to cancel cohort generation', result.error)
+      throw new Error(result.error.message)
+    }
+
+    const job = getJobsByCohortId(cohortId).find(candidate => candidate.sourceKey === sourceKey)
+    if (job) cancellationRequests.add(job.id)
+
+    // Cancellation is cooperative; wait for /info to confirm isCanceled.
+    void pollGenerationStatus(cohortId)
   }
 
   /**
@@ -219,6 +314,7 @@ export const useWebAPIStore = defineStore('webapi', () => {
   const POLL_INTERVAL_MS = 2000 // 2 seconds
   const POLL_TIMEOUT_MS = 300000 // 5 minutes max
   const pollingStops = new Map<number, () => void>()
+  const cancellationRequests = new Set<number>()
 
   function applyGenerationInfo(cohortId: number, infoList: CohortGenerationInfoList): void {
     for (const info of infoList) {
@@ -230,23 +326,37 @@ export const useWebAPIStore = defineStore('webapi', () => {
 
       const source = sources.value.find(s => s.sourceId === info.id.sourceId)
       const sourceKey = source?.sourceKey ?? existing.sourceKey
+      const isCanceled = info.isCanceled && !isGenerationActive(info.status)
+      const isProvisionalCancellation =
+        cancellationRequests.has(info.id.sourceId) &&
+        info.status === 'COMPLETE' &&
+        info.isValid === false &&
+        !info.isCanceled
+
+      // The legacy endpoint persists this intermediate state before the
+      // cancellation finishes. Preserve the active row until confirmation.
+      if (isProvisionalCancellation) continue
 
       updateGenerationJob(info.id.sourceId, {
         id: info.id.sourceId,
         cohortDefinitionId: cohortId,
         sourceKey,
-        status: info.status,
+        status: isCanceled ? 'CANCELED' : info.status,
         personCount: info.personCount ?? undefined,
         recordCount: info.recordCount ?? undefined,
         startTime: info.startTime ? new Date(info.startTime).toISOString() : existing.startTime,
         endTime:
-          info.status === 'COMPLETE' || info.status === 'FAILED'
+          info.status === 'COMPLETE' || info.status === 'FAILED' || isCanceled
             ? info.startTime != null && info.executionDuration != null
               ? new Date(info.startTime + info.executionDuration).toISOString()
               : new Date().toISOString()
             : undefined,
         failMessage: info.failMessage ?? undefined,
       })
+
+      if (!isGenerationActive(isCanceled ? 'CANCELED' : info.status)) {
+        cancellationRequests.delete(info.id.sourceId)
+      }
     }
   }
 
@@ -267,9 +377,7 @@ export const useWebAPIStore = defineStore('webapi', () => {
           applyGenerationInfo(cohortId, result.data)
         }
 
-        const stillActive = getJobsByCohortId(cohortId).some(
-          j => j.status === 'PENDING' || j.status === 'RUNNING'
-        )
+        const stillActive = getJobsByCohortId(cohortId).some(j => isGenerationActive(j.status))
 
         if (stillActive && Date.now() - startTime > POLL_TIMEOUT_MS) {
           logger.warn('WebAPIStore', `Generation polling timeout for cohort ${cohortId}`)
@@ -335,11 +443,12 @@ export const useWebAPIStore = defineStore('webapi', () => {
         }
 
         // Create a GenerationJob from the info
+        const isCanceled = info.isCanceled && !isGenerationActive(info.status)
         const job: GenerationJob = {
           id: info.id.sourceId, // Use sourceId as job ID (since we don't have a separate job ID)
           cohortDefinitionId: info.id.cohortDefinitionId,
           sourceKey: source.sourceKey,
-          status: info.status,
+          status: isCanceled ? 'CANCELED' : info.status,
           startTime: info.startTime ? new Date(info.startTime).toISOString() : undefined,
           endTime:
             info.executionDuration && info.startTime
@@ -351,6 +460,10 @@ export const useWebAPIStore = defineStore('webapi', () => {
         }
 
         addGenerationJob(job)
+      }
+
+      if (getJobsByCohortId(cohortId).some(job => isGenerationActive(job.status))) {
+        void pollGenerationStatus(cohortId)
       }
     } catch (error) {
       logger.error('WebAPIStore', 'Failed to fetch cohort generation info', error)
@@ -389,6 +502,7 @@ export const useWebAPIStore = defineStore('webapi', () => {
     fetchSources,
     fetchCohortGenerationInfo,
     generateCohort,
+    cancelCohortGeneration,
     pollGenerationStatus,
     stopPolling,
     stopAllPolling,

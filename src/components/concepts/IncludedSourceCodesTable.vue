@@ -14,7 +14,7 @@
           data-testid="source-codes-retry-btn"
           @click="store.resolveSourceCodes(props.sourceKey)"
         >
-          {{ t('common.retry', 'Retry').value }}
+          {{ t('common.retry').value }}
         </AtlasButton>
       </div>
     </AtlasAlert>
@@ -31,7 +31,27 @@
       @update:facet="({ key, values }) => setFacet(key, values)"
       @update:result-filter="setTextFilter"
       @clear="clearFilters()"
-    />
+    >
+      <template
+        v-if="recordCountSources.length > 0"
+        #append
+      >
+        <AtlasSelect
+          :model-value="effectiveRecordCountSource"
+          :items="recordCountSources"
+          item-title="sourceName"
+          item-value="sourceKey"
+          :label="viewCountsForLabel"
+          density="compact"
+          variant="outlined"
+          hide-details
+          :loading="loadingRecordCounts"
+          :menu-props="{ zIndex: 2300 }"
+          data-testid="source-codes-record-count-source"
+          @update:model-value="(v: unknown) => setRecordCountSource(String(v))"
+        />
+      </template>
+    </ConceptFacetFilters>
 
     <!-- Source codes resolve out of the expression like included concepts do,
          so acting on one means adding an expression item for it (#224). -->
@@ -53,6 +73,7 @@
         :headers="headers"
         :items="visibleSourceCodes"
         :loading="store.sourceCodeLoading"
+        must-sort
         multi-sort
         hover
         class="included-source-codes-table__table"
@@ -62,7 +83,7 @@
             <v-checkbox-btn
               :model-value="allVisibleSelected"
               :indeterminate="someVisibleSelected && !allVisibleSelected"
-              :aria-label="t('components.conceptTable.selectAllConcepts', 'Select all concepts').value"
+              :aria-label="t('components.conceptTable.selectAllConcepts').value"
               density="compact"
               hide-details
               @update:model-value="onToggleSelectAll"
@@ -123,10 +144,27 @@
           </AtlasChip>
         </template>
 
+        <template
+          v-for="key in COUNT_KEYS"
+          :key="key"
+          #[`item.${key}`]="{ item }"
+        >
+          <div class="d-flex align-center justify-end">
+            <AtlasProgressCircular
+              v-if="loadingRecordCounts && item[key] === undefined"
+              indeterminate
+              size="16"
+              width="2"
+              color="primary"
+            />
+            <span v-else>{{ formatCount(item[key]) }}</span>
+          </div>
+        </template>
+
         <template #no-data>
           <div class="included-source-codes-table__no-match">
             <p class="included-source-codes-table__no-match-text">
-              {{ t('cs.manager.emptyFilteredMessage', 'No concepts match the active filters.').value }}
+              {{ t('cs.manager.emptyFilteredMessage').value }}
             </p>
             <AtlasButton
               size="sm"
@@ -134,7 +172,7 @@
               data-testid="source-codes-clear-filters-btn"
               @click="clearFilters()"
             >
-              {{ t('versions.filterClear', 'Clear filters').value }}
+              {{ t('versions.filterClear').value }}
             </AtlasButton>
           </div>
         </template>
@@ -178,11 +216,14 @@ import {
   AtlasChip,
   AtlasDataTable,
   AtlasIcon,
+  AtlasProgressCircular,
+  AtlasSelect,
   AtlasSkeleton,
 } from '@/components/ui'
 import ConceptFacetFilters from './ConceptFacetFilters.vue'
 import ConceptAddOptions from './ConceptAddOptions.vue'
 import { CONCEPT_FACETS, useConceptFacets } from '@/composables/useConceptFacets'
+import { useConceptRecordCounts } from '@/composables/useConceptRecordCounts'
 import { getDomainColor } from '@/utils/domain-colors'
 import { useThemeStore } from '@/stores/theme'
 
@@ -242,7 +283,18 @@ function onAddSelected() {
   selected.value = []
 }
 
-const sortBy = ref([{ key: 'conceptId', order: 'asc' as const }])
+const sortBy = ref([{ key: 'descendantRecordCount', order: 'desc' as const }])
+
+const COUNT_KEYS = [
+  'recordCount',
+  'descendantRecordCount',
+  'personCount',
+  'descendantPersonCount',
+] as const
+
+function formatCount(count: number | undefined): string {
+  return count === undefined ? '-' : count.toLocaleString()
+}
 
 /**
  * See IncludedConceptsTable: a bare `:items-per-page` makes v-data-table's model
@@ -259,6 +311,16 @@ const facets = CONCEPT_FACETS.filter(f =>
 const sourceCodeItems = computed(() => store.sourceCodeItems)
 
 const {
+  conceptsWithCounts: sourceCodesWithCounts,
+  loading: loadingRecordCounts,
+  sources: recordCountSources,
+  effectiveSourceKey: effectiveRecordCountSource,
+  setSource: setRecordCountSource,
+} = useConceptRecordCounts(sourceCodeItems)
+
+const viewCountsForLabel = t('search.viewCountMessage')
+
+const {
   facetOptions,
   selected: selectedFacets,
   textFilter,
@@ -267,16 +329,20 @@ const {
   setFacet,
   setTextFilter,
   clearFilters,
-} = useConceptFacets(sourceCodeItems, facets)
+} = useConceptFacets(sourceCodesWithCounts, facets)
 
 const headers = [
   { title: '', key: 'select', sortable: false, width: '48px' },
-  { title: t('columns.conceptId', 'ID').value, key: 'conceptId', sortable: true, width: '90px' },
-  { title: t('columns.conceptCode', 'Code').value, key: 'conceptCode', sortable: true, width: '110px' },
-  { title: t('columns.conceptName', 'Name').value, key: 'conceptName', sortable: true },
-  { title: t('columns.class', 'Class').value, key: 'conceptClassId', sortable: true, width: '150px' },
-  { title: t('columns.domain', 'Domain').value, key: 'domainId', sortable: true, width: '120px' },
-  { title: t('columns.vocabulary', 'Vocabulary').value, key: 'vocabularyId', sortable: true, width: '120px' },
+  { title: t('columns.conceptId').value, key: 'conceptId', sortable: true, width: '90px' },
+  { title: t('columns.conceptCode').value, key: 'conceptCode', sortable: true, width: '110px' },
+  { title: t('columns.conceptName').value, key: 'conceptName', sortable: true },
+  { title: t('columns.class').value, key: 'conceptClassId', sortable: true, width: '150px' },
+  { title: t('columns.domain').value, key: 'domainId', sortable: true, width: '120px' },
+  { title: t('columns.vocabulary').value, key: 'vocabularyId', sortable: true, width: '120px' },
+  { title: t('columns.rcTooltip').value, key: 'recordCount', sortable: true, width: '100px', align: 'end' as const },
+  { title: t('columns.drcTooltip').value, key: 'descendantRecordCount', sortable: true, width: '100px', align: 'end' as const },
+  { title: t('columns.pcTooltip').value, key: 'personCount', sortable: true, width: '100px', align: 'end' as const },
+  { title: t('columns.dpcTooltip').value, key: 'descendantPersonCount', sortable: true, width: '100px', align: 'end' as const },
 ]
 
 // Signature of the included concept ids — re-resolve when it changes while active.
@@ -288,12 +354,10 @@ const emptyMessage = computed(() => {
   if (store.includedItems.length === 0) {
     return t(
       'cs.manager.sourceCodesEmptyNoIncluded',
-      'Add concepts to see their mapped source codes here.',
     ).value
   }
   return t(
     'cs.manager.sourceCodesEmpty',
-    'No source codes map to the included concepts.',
   ).value
 })
 

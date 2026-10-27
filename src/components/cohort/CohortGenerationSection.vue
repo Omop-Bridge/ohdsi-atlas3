@@ -1,7 +1,7 @@
 <template>
   <AtlasCollapsibleSection
     data-testid="cohort-generation-section"
-    :title="t('cohortDefinitions.generation.section.title', 'Generation').value"
+    :title="t('cohortDefinitions.generation.section.title').value"
     :state-chip="stateChip"
     :meta="metaText"
     :default-expanded="defaultExpanded"
@@ -9,7 +9,7 @@
     <template #controls>
       <AtlasSwitch
         v-model="onlyGenerated"
-        :label="t('cohortDefinitions.generation.section.onlyGenerated', 'Only generated').value"
+        :label="t('cohortDefinitions.generation.section.onlyGenerated').value"
       />
     </template>
 
@@ -29,7 +29,7 @@
               :disabled="true"
               data-testid="generate-all-btn"
             >
-              {{ t('cohortDefinitions.generation.section.generateAll', 'Generate all').value }}
+              {{ t('cohortDefinitions.generation.section.generateAll').value }}
             </AtlasButton>
           </span>
         </template>
@@ -43,7 +43,7 @@
         data-testid="generate-all-btn"
         @click="generateAll"
       >
-        {{ t('cohortDefinitions.generation.section.generateAll', 'Generate all').value }}
+        {{ t('cohortDefinitions.generation.section.generateAll').value }}
       </AtlasButton>
     </template>
 
@@ -51,13 +51,13 @@
       v-if="cohortId === null"
       severity="warning"
     >
-      {{ t('cohortDefinitions.saveDefinitionBefore', 'Please save the cohort before generating.').value }}
+      {{ t('cohortDefinitions.saveBeforeGenerate').value }}
     </AtlasAlert>
     <AtlasAlert
       v-else-if="sources.length === 0"
       severity="info"
     >
-      {{ t('components.generation.pickAtLeastOneSourceAlert', 'No data sources configured.').value }}
+      {{ t('components.generation.noSourcesConfigured').value }}
     </AtlasAlert>
     <DataSourceRunTable
       v-else
@@ -65,11 +65,11 @@
       :executions="runTableExecutions"
       :loading="false"
       :show-patient-count="true"
-      :hide-cancel="true"
       :run-disabled="generateBlocked"
       :run-disabled-reason="generateDisabledReason"
       :extra-actions="extraActions"
       @run="onRun"
+      @cancel="onCancel"
       @show-history="onShowHistory"
       @extra-action="onExtraAction"
     />
@@ -114,7 +114,11 @@ import DataSourceRunTable, {
   type ExtraAction,
 } from '@/components/generation/DataSourceRunTable.vue'
 import PreviousRunsDialog from '@/components/generation/PreviousRunsDialog.vue'
-import type { GenerationStatus as CohortStatus, GenerationJob } from '@/models/webapi.types'
+import {
+  isGenerationActive,
+  type GenerationStatus as CohortStatus,
+  type GenerationJob,
+} from '@/models/webapi.types'
 import type { GenerationStatus as TableStatus } from '@/models/characterization.types'
 import { logger } from '@/utils/logger'
 
@@ -192,24 +196,24 @@ const completeCount = computed(() => jobs.value.filter(j => j.status === 'COMPLE
 const stateChip = computed<{ label: string; tone: AtlasChipTone } | undefined>(() => {
   if (props.cohortId === null) {
     return {
-      label: t('cohortDefinitions.generation.section.statusSaveFirst', 'Save cohort to generate').value,
+      label: t('cohortDefinitions.generation.section.statusSaveFirst').value,
       tone: 'neutral',
     }
   }
   if (jobs.value.length === 0) {
     return {
-      label: t('cohortDefinitions.generation.section.statusNoRuns', 'No generations yet').value,
+      label: t('cohortDefinitions.generation.section.statusNoRuns').value,
       tone: 'neutral',
     }
   }
   const total = sources.value.length || jobs.value.length
-  const label = t('cohortDefinitions.generation.section.statusCount', '{done} / {total} generated', {
+  const label = t('cohortDefinitions.generation.section.statusCount', {
     done: completeCount.value,
     total,
   }).value
   let tone: AtlasChipTone = 'success'
   if (jobs.value.some(j => j.status === 'FAILED')) tone = 'danger'
-  else if (jobs.value.some(j => j.status === 'RUNNING' || j.status === 'PENDING')) tone = 'warning'
+  else if (jobs.value.some(j => isGenerationActive(j.status))) tone = 'warning'
   else if (completeCount.value === 0) tone = 'neutral'
   return { label, tone }
 })
@@ -223,7 +227,7 @@ const metaText = computed(() => {
   if (!latest) return undefined
   const sourceName = sources.value.find(s => s.sourceKey === latest.sourceKey)?.sourceName ?? latest.sourceKey
   const time = formatRelative(new Date(latest.startTime!).getTime())
-  return t('cohortDefinitions.generation.section.lastRunMeta', 'Last run · {time} on {source}', {
+  return t('cohortDefinitions.generation.section.lastRunMeta', {
     time,
     source: sourceName,
   }).value
@@ -258,7 +262,7 @@ const generateBlocked = computed(
 const generateDisabledReason = computed(() => {
   if (props.criticalCount > 0) return t('const.disabledReason.invalidDesign').value
   if (props.isDirty) return t('const.disabledReason.dirty').value
-  if (props.validationStatus !== 'validated') return t('common.loadingWithDots', 'Loading...').value
+  if (props.validationStatus !== 'validated') return t('common.loadingWithDots').value
   return undefined
 })
 
@@ -268,7 +272,7 @@ const canGenerateAll = computed(() => {
   return sources.value.some(s => {
     if (!sourceAccess.canWrite(s.sourceId)) return false
     const j = jobs.value.find(x => x.sourceKey === s.sourceKey)
-    return !j || (j.status !== 'RUNNING' && j.status !== 'PENDING')
+    return !j || !isGenerationActive(j.status)
   })
 })
 
@@ -277,7 +281,7 @@ async function generateAll() {
   for (const s of sources.value) {
     if (!sourceAccess.canWrite(s.sourceId)) continue
     const j = jobs.value.find(x => x.sourceKey === s.sourceKey)
-    if (j && (j.status === 'RUNNING' || j.status === 'PENDING')) continue
+    if (j && isGenerationActive(j.status)) continue
     try {
       await webapiStore.generateCohort(props.cohortId, s.sourceKey)
     } catch (error) {
@@ -292,6 +296,15 @@ async function onRun(sourceKey: string) {
     await webapiStore.generateCohort(props.cohortId, sourceKey)
   } catch (error) {
     logger.error('CohortGenerationSection', 'generate failed for ' + sourceKey, error)
+  }
+}
+
+async function onCancel(sourceKey: string) {
+  if (props.cohortId === null) return
+  try {
+    await webapiStore.cancelCohortGeneration(props.cohortId, sourceKey)
+  } catch (error) {
+    logger.error('CohortGenerationSection', 'cancel failed for ' + sourceKey, error)
   }
 }
 
@@ -340,12 +353,12 @@ function onProfileBack() {
 const extraActions: ExtraAction[] = [
   {
     key: 'inclusion',
-    label: t('cohortDefinitions.generation.row.inclusionReport', 'Inclusion report').value,
+    label: t('cohortDefinitions.generation.row.inclusionReport').value,
     disabledWhen: r => r.latestStatus !== 'COMPLETED',
   },
   {
     key: 'samples',
-    label: t('cohortDefinitions.generation.row.samples', 'Samples').value,
+    label: t('cohortDefinitions.generation.row.samples').value,
     disabledWhen: r => r.latestStatus !== 'COMPLETED',
   },
 ]

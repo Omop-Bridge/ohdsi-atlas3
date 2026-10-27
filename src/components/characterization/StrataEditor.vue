@@ -11,7 +11,7 @@
   <div class="strata-editor">
     <div class="strata-editor__header">
       <h2 class="strata-editor__title">
-        {{ t('cc.viewEdit.design.subgroups.title', 'Subgroup analyses').value }}
+        {{ t('cc.viewEdit.design.subgroups.title').value }}
       </h2>
       <AtlasButton
         variant="secondary"
@@ -20,7 +20,7 @@
         data-testid="strata-editor-add"
         @click="addStratum"
       >
-        {{ t('cc.viewEdit.design.subgroups.newSubgroup', 'New subgroup').value }}
+        {{ t('cc.viewEdit.design.subgroups.newSubgroup').value }}
       </AtlasButton>
     </div>
 
@@ -29,14 +29,14 @@
       class="strata-editor__empty"
       data-testid="strata-editor-empty"
     >
-      {{ t('cc.viewEdit.design.subgroups.noSubgroups', 'No subgroups defined').value }}
+      {{ t('cc.viewEdit.design.subgroups.noSubgroups').value }}
     </div>
 
     <AtlasSwitch
       v-if="modelValue.length > 0"
       :model-value="strataOnly"
       :label="
-        t('cc.viewEdit.design.subgroups.subgroupOnly', 'Calculate subgroup analyses only').value
+        t('cc.viewEdit.design.subgroups.subgroupOnly').value
       "
       hide-details
       data-testid="strata-editor-only"
@@ -53,7 +53,7 @@
         <AtlasTextField
           :model-value="stratum.name"
           :label="
-            t('cc.viewEdit.design.subgroups.namePlaceholder', 'Subgroup name').value
+            t('cc.viewEdit.design.subgroups.namePlaceholder').value
           "
           :error="nameErrors(stratum.name)?.[0]"
           variant="outlined"
@@ -64,7 +64,7 @@
         />
         <AtlasIconButton
           icon="mdi-delete"
-          v-bind="{ ariaLabel: t('columns.remove', 'Remove').value }"
+          v-bind="{ ariaLabel: t('columns.remove').value }"
           variant="text"
           tone="danger"
           size="sm"
@@ -88,20 +88,20 @@
           :data-testid="`strata-editor-edit-criteria-${index}`"
           @click="openCriteriaDialog(stratum.id)"
         >
-          {{ t('common.editCriteria', 'Edit criteria').value }}
+          {{ t('common.editCriteria').value }}
         </AtlasButton>
       </div>
     </div>
 
     <v-navigation-drawer
       v-if="drawerOpen"
-      v-model="drawerOpen"
+      :model-value="drawerOpen"
       class="strata-editor__drawer"
       location="right"
       temporary
       :width="drawerWidth"
       :scrim="!conceptSetsStore.editorOpen"
-      @update:model-value="value => { if (!value) closeDrawer() }"
+      @update:model-value="onDrawerModelValue"
     >
       <div class="strata-editor__drawer-shell">
         <aside
@@ -109,7 +109,7 @@
           aria-hidden="true"
         >
           <div class="strata-editor__drawer-rail-text">
-            {{ t('cc.viewEdit.design.subgroups.title', 'Subgroup analyses').value }}
+            {{ t('cc.viewEdit.design.subgroups.title').value }}
           </div>
         </aside>
 
@@ -117,20 +117,31 @@
           <header class="strata-editor__drawer-header">
             <div>
               <p class="strata-editor__drawer-eyebrow">
-                {{ t('cc.viewEdit.design.subgroups.title', 'Subgroup analyses').value }}
+                {{ t('cc.viewEdit.design.subgroups.title').value }}
               </p>
               <h3 class="strata-editor__drawer-title">
                 {{ drawerTitle }}
               </h3>
             </div>
 
-            <AtlasButton
-              variant="ghost"
-              size="sm"
-              @click="closeDrawer"
-            >
-              {{ t('common.close', 'Close').value }}
-            </AtlasButton>
+            <div class="d-flex ga-2">
+              <AtlasButton
+                variant="ghost"
+                size="sm"
+                data-testid="strata-editor-cancel-criteria"
+                @click="requestCancel"
+              >
+                {{ t('common.cancel').value }}
+              </AtlasButton>
+              <AtlasButton
+                variant="primary"
+                size="sm"
+                data-testid="strata-editor-apply-criteria"
+                @click="applyCriteriaChanges"
+              >
+                {{ t('common.apply').value }}
+              </AtlasButton>
+            </div>
           </header>
 
           <div class="strata-editor__drawer-content">
@@ -142,19 +153,35 @@
               @edit-concept-set="handleCriteriaEditConceptSet"
             />
           </div>
-
-          <footer class="strata-editor__drawer-actions">
-            <AtlasButton
-              variant="ghost"
-              size="sm"
-              @click="closeDrawer"
-            >
-              {{ t('common.close', 'Close').value }}
-            </AtlasButton>
-          </footer>
         </div>
       </div>
     </v-navigation-drawer>
+
+    <AtlasDialog
+      v-model="discardConfirmationOpen"
+      :title="t('common.discardChanges').value"
+      :close-label="t('common.cancel').value"
+      max-width="420"
+    >
+      <p>{{ t('characterizations.editor.strata.discardChanges').value }}</p>
+      <template #actions>
+        <AtlasButton
+          variant="secondary"
+          data-testid="strata-editor-keep-editing"
+          @click="discardConfirmationOpen = false"
+        >
+          {{ t('common.keepEditing').value }}
+        </AtlasButton>
+        <AtlasButton
+          variant="primary"
+          tone="danger"
+          data-testid="strata-editor-discard-criteria"
+          @click="discardCriteriaChanges"
+        >
+          {{ t('common.discard').value }}
+        </AtlasButton>
+      </template>
+    </AtlasDialog>
 
     <ConceptSetSelectionDialog
       v-model="csPickerOpen"
@@ -162,6 +189,12 @@
       @local-concept-set-selected="onLocalConceptSetSelected"
       @concept-set-selected="onConceptSetSelected"
       @create-new="handleCreateNewConceptSet"
+    />
+
+    <ConceptSearchDialog
+      v-model="conceptSearchOpen"
+      :domain-filter="conceptSearchDomainFilter"
+      @concepts-selected="onConceptsSelected"
     />
 
     <ConceptSetEditor
@@ -180,10 +213,12 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 
 import { useI18n } from '@/composables/useI18n'
 import { useCirceConceptSetPicker } from '@/composables/useCirceConceptSetPicker'
-import { AtlasButton, AtlasChip, AtlasIconButton, AtlasSwitch, AtlasTextField } from '@/components/ui'
+import { AtlasButton, AtlasChip, AtlasDialog, AtlasIconButton, AtlasSwitch, AtlasTextField } from '@/components/ui'
 import ConceptSetEditor from '@/components/concepts/ConceptSetEditor.vue'
 import CriteriaGroup from '@/components/circe/criteria/CriteriaGroup.vue'
 import ConceptSetSelectionDialog from '@/components/cohort/ConceptSetSelectionDialog.vue'
+import ConceptSearchDialog from '@/components/cohort/ConceptSearchDialog.vue'
+import { useCriteriaConceptSearch } from '@/composables/useCriteriaConceptSearch'
 import { useConceptSetsStore } from '@/stores/concept-sets'
 import type { Stratum, CriteriaGroup as CriteriaGroupType } from '@/models/characterization.types'
 import type { ConceptSet } from '@/models/circe-types'
@@ -229,6 +264,11 @@ onBeforeUnmount(() => {
 
 // Scratch object mutated in-place by CriteriaGroup.vue while the dialog is open.
 const editingGroup = ref<CriteriaGroupType>({})
+const originalGroup = ref<CriteriaGroupType>({})
+const discardConfirmationOpen = ref(false)
+const hasUnsavedCriteriaChanges = computed(() =>
+  JSON.stringify(editingGroup.value) !== JSON.stringify(originalGroup.value),
+)
 
 const dialogStratum = computed<Stratum | null>(() => {
   if (!editingStratumId.value) return null
@@ -239,7 +279,7 @@ const drawerTitle = computed<string>(() => {
   const stratum = dialogStratum.value
   if (!stratum) return ''
   return stratum.name.trim()
-    || tv('cc.viewEdit.design.subgroups.namePlaceholder', 'Subgroup name')
+    || tv('cc.viewEdit.design.subgroups.namePlaceholder')
 })
 
 // ── Concept-set picker ────────────────────────────────────────────────────
@@ -267,19 +307,27 @@ const localConceptSets = computed<ConceptSetReference[]>(() =>
     .map(cs => ({ id: cs.id, name: cs.name ?? '', items: cs.expression?.items ?? [] }))
 )
 
+// ── Concept search (gender/race/etc. attributes) ──────────────────────────
+
+const { conceptSearchOpen, conceptSearchDomainFilter, onConceptsSelected } = useCriteriaConceptSearch()
+
 // ── Dialog helpers ────────────────────────────────────────────────────────
 
 function openCriteriaDialog(id: string) {
   const stratum = props.modelValue.find(s => s.id === id)
   const existing = stratum?.criteria ?? { Type: 'ALL', CriteriaList: [] }
-  // Deep-clone into the scratch ref so CriteriaGroup mutations stay local
-  // until the dialog is closed and changes are emitted to the parent.
-  editingGroup.value = JSON.parse(JSON.stringify(existing)) as CriteriaGroupType
+  originalGroup.value = JSON.parse(JSON.stringify(existing)) as CriteriaGroupType
+  editingGroup.value = JSON.parse(JSON.stringify(originalGroup.value)) as CriteriaGroupType
   editingStratumId.value = id
   drawerOpen.value = true
 }
 
 function closeDrawer() {
+  drawerOpen.value = false
+  editingStratumId.value = null
+}
+
+function applyCriteriaChanges() {
   const id = editingStratumId.value
   if (id) {
     const next = props.modelValue.map(s =>
@@ -287,8 +335,24 @@ function closeDrawer() {
     )
     emit('update:modelValue', next)
   }
-  drawerOpen.value = false
-  editingStratumId.value = null
+  closeDrawer()
+}
+
+function requestCancel() {
+  if (hasUnsavedCriteriaChanges.value) {
+    discardConfirmationOpen.value = true
+    return
+  }
+  closeDrawer()
+}
+
+function discardCriteriaChanges() {
+  discardConfirmationOpen.value = false
+  closeDrawer()
+}
+
+function onDrawerModelValue(value: boolean) {
+  if (!value) requestCancel()
 }
 
 function onConceptSetEditorVisibilityChange(value: boolean) {
@@ -376,11 +440,11 @@ function isDuplicate(name: string): boolean {
 
 function nameErrors(name: string): string[] {
   if (!name.trim()) {
-    return [tv('cc.viewEdit.design.subgroups.messages.nameIsEmpty', 'Subgroup name is empty.')]
+    return [tv('cc.viewEdit.design.subgroups.messages.nameIsEmpty')]
   }
   if (isDuplicate(name)) {
     return [
-      tv('cc.viewEdit.design.subgroups.messages.nameIsNotUnique', 'Subgroup name is duplicated.'),
+      tv('cc.viewEdit.design.subgroups.messages.nameIsNotUnique'),
     ]
   }
   return []
@@ -399,12 +463,12 @@ function hasCriteria(stratum: Stratum): boolean {
 
 function criteriaSummary(stratum: Stratum): string {
   if (!hasCriteria(stratum)) {
-    return tv('characterizations.editor.strata.noCriteria', 'No criteria')
+    return tv('characterizations.editor.strata.noCriteria')
   }
   const c = stratum.criteria as CriteriaGroupType
   const n = (c.CriteriaList?.length ?? 0) + (c.DemographicCriteriaList?.length ?? 0)
   return n === 1
-    ? tv('characterizations.editor.strata.eventCount', '1 event')
+    ? tv('characterizations.editor.strata.eventCount')
     : tv('characterizations.editor.strata.eventsCount', `${n} events`, {
         n,
       })

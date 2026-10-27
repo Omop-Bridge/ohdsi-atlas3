@@ -4,6 +4,7 @@
       <AtlasTextField
         v-model="localFilters.searchQuery"
         :placeholder="searchLabel"
+        :data-testid="searchTestId"
         prepend-icon="mdi-magnify"
         clearable
         variant="outlined"
@@ -269,6 +270,8 @@ interface Props {
   availableAuthors: string[]
   availableTags: string[]
   activeFilterCount: number
+  searchPlaceholder?: string
+  searchTestId?: string
 }
 
 interface Emits {
@@ -280,20 +283,21 @@ const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 const { t, locale } = useI18n()
 
-const filtersLabel = t('common.filters', 'Filters')
-const searchLabel = t('common.search', 'Search concept sets…')
-const authorLabel = t('columns.author', 'Author')
-const createdLabel = t('columns.created', 'Created')
-const modifiedLabel = t('columns.modified', 'Modified')
-const fromLabel = t('common.from', 'From')
-const toLabel = t('common.to', 'To')
-const createdFromLabel = t('common.createdFrom', 'Created from')
-const createdToLabel = t('common.createdTo', 'Created to')
-const modifiedFromLabel = t('common.modifiedFrom', 'Modified from')
-const modifiedToLabel = t('common.modifiedTo', 'Modified to')
-const clearAllLabel = t('search.clearAllSelections', 'Clear all')
+const filtersLabel = t('common.filters')
+const searchLabel = computed(() => props.searchPlaceholder ?? t('cs.searchPlaceholder').value)
+const searchTestId = computed(() => props.searchTestId)
+const authorLabel = t('columns.author')
+const createdLabel = t('columns.created')
+const modifiedLabel = t('columns.modified')
+const fromLabel = t('common.from')
+const toLabel = t('common.to')
+const createdFromLabel = t('common.createdFrom')
+const createdToLabel = t('common.createdTo')
+const modifiedFromLabel = t('common.modifiedFrom')
+const modifiedToLabel = t('common.modifiedTo')
+const clearAllLabel = t('search.clearAllSelections')
 
-const tagsLabel = t('common.tags', 'Tags')
+const tagsLabel = t('common.tags')
 
 const filtersMenuOpen = ref(false)
 const localFilters = ref<ConceptSetFilterState>({

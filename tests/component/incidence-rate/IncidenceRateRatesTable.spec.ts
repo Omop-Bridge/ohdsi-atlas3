@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { vuetify, pristinePinia } from './_test-helpers'
 import IncidenceRateRatesTable from '@/components/incidence-rate/IncidenceRateRatesTable.vue'
+import { tr } from '../../helpers/i18n-mock'
+import { vuetify, pristinePinia } from './_test-helpers'
 
 const report = {
   summary: { targetId: 1, outcomeId: 2, totalPersons: 100, cases: 5, timeAtRisk: 36500, proportion: 0.05, rate: 0.0005 },
@@ -22,5 +23,19 @@ describe('IncidenceRateRatesTable', () => {
     expect(rows.length).toBe(3) // summary + 2 strata
     // summary rate per 1000 person-years = 0.0005 * 1000 = 0.50
     expect(rows[0].text()).toContain('0.50')
+    expect(rows[0].text()).toContain('36,500')
+    // 2 cases / 21,900 person-years * 1000 = 0.09
+    expect(rows[1].text()).toContain('0.09')
+  })
+
+  it('labels person-time and the rate denominator explicitly', () => {
+    const w = mount(IncidenceRateRatesTable, {
+      global: { plugins: [pristinePinia(), vuetify] },
+      props: { report, multiplier: 1000 },
+    })
+
+    const headers = w.findAll('thead th').map(header => header.text())
+    expect(headers).toContain(tr('ir.results.timeAtRiskYears'))
+    expect(headers).toContain(`${tr('ir.results.rate')} / 1,000 PY`)
   })
 })

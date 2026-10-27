@@ -45,6 +45,8 @@ import CharacterizationsView from '@/views/CharacterizationsView.vue'
 import { useCharacterizationStore } from '@/stores/characterization'
 import { useAuthStore } from '@/stores/auth'
 import { emptyEntityAccess } from '@/models/auth.types'
+import AnalysisDataTable from '@/components/analysis/AnalysisDataTable.vue'
+import { tr } from '../../helpers/i18n-mock'
 
 const vuetify = createVuetify({ components, directives })
 
@@ -59,8 +61,13 @@ const sampleList: CharacterizationListItem[] = [
     id: 1,
     name: 'Diabetes Cohort Profile',
     description: 'Demographics + comorbidities',
-    cohorts: [{ id: 11, name: 'Diabetes' }],
-    featureAnalyses: [{ id: 21 }, { id: 22 }],
+    tags: [
+      {
+        id: 18,
+        name: 'Some Tag',
+        groups: [{ id: 17, name: 'test' }],
+      },
+    ],
     createdBy: { login: 'admin', name: 'Admin' },
     createdDate: 1737000000000,
     modifiedDate: 1737500000000,
@@ -68,8 +75,7 @@ const sampleList: CharacterizationListItem[] = [
   {
     id: 2,
     name: 'Hypertension Profile',
-    cohorts: [{ id: 12, name: 'HTN' }],
-    featureAnalyses: [{ id: 21 }],
+    tags: [{ id: 19, name: 'Cardiovascular' }],
     createdBy: 'ohdsi',
     createdDate: 1737100000000,
     modifiedDate: 1737200000000,
@@ -88,9 +94,9 @@ function makeRouter(): Router {
   })
 }
 
-async function mountView() {
+async function mountView(initialPath = '/characterizations') {
   const router = makeRouter()
-  await router.push('/characterizations')
+  await router.push(initialPath)
   await router.isReady()
 
   // Pinia must be installed AND active before the component sets up, so that
@@ -107,7 +113,12 @@ async function mountView() {
   })
 
   const wrapper = mount(CharacterizationsView, {
-    global: { plugins: [vuetify, pinia, router] },
+    global: {
+      plugins: [vuetify, pinia, router],
+      stubs: {
+        AtlasDialog: { template: '<div><slot /><slot name="actions" /></div>' },
+      },
+    },
   })
 
   await flushPromises()
@@ -145,10 +156,13 @@ describe('CharacterizationsView', () => {
     const headers = mounted.wrapper
       .findAll('[data-testid="characterizations-table"] thead th')
       .map(h => h.text())
-    expect(headers).toContain('Id')
+    expect(headers).toContain(tr('columns.id'))
+    expect(headers).toContain(tr('common.tags'))
     expect(headers).toContain('Created')
     expect(headers).toContain('Updated')
     expect(headers).not.toContain('Modified')
+    expect(headers).not.toContain(tr('cc.viewEdit.results.filters.cohorts'))
+    expect(headers).not.toContain(tr('cc.tabs.featureAnalyses.title'))
 
     const row = mounted.wrapper
       .find('[data-testid="characterizations-table-row-name"]')
@@ -162,6 +176,75 @@ describe('CharacterizationsView', () => {
 
     expect(mounted.wrapper.text()).toContain('Diabetes Cohort Profile')
     expect(mounted.wrapper.text()).toContain('Hypertension Profile')
+    expect(mounted.wrapper.text()).toContain('test')
+    expect(mounted.wrapper.text()).toContain('Some Tag')
+  })
+
+  it('sorts all characterizations before selecting the current page', async () => {
+    const characterizations = Array.from({ length: 61 }, (_, index) => ({
+      id: index + 1,
+      name: `Characterization ${String(index + 1).padStart(3, '0')}`,
+      description: '',
+      cohorts: [],
+      featureAnalyses: [],
+      createdBy: 'ohdsi',
+      createdDate: 0,
+      modifiedDate: 0,
+    }))
+    vi.mocked(listCharacterizations).mockResolvedValue(success(characterizations))
+    mounted = await mountView('/characterizations?page=2')
+
+    expect(mounted.wrapper.text()).toContain('Characterization 061')
+
+    mounted.wrapper.findComponent(AnalysisDataTable).vm.$emit('update:sortBy', [{ key: 'name', order: 'desc' }])
+    await flushPromises()
+
+    expect(mounted.wrapper.text()).toContain('Characterization 001')
+    expect(mounted.wrapper.text()).not.toContain('Characterization 061')
+  })
+
+  it('sorts user, numeric, and text columns locally and supports clearing the sort', async () => {
+    const characterizations: CharacterizationListItem[] = [
+      {
+        id: 20,
+        name: 'Zulu',
+        description: 'last',
+        cohorts: [],
+        featureAnalyses: [],
+        createdBy: { login: 'zoe', name: 'Zoe' },
+        createdDate: 0,
+        modifiedDate: 0,
+      },
+      {
+        id: 10,
+        name: 'Alpha',
+        description: 'first',
+        cohorts: [],
+        featureAnalyses: [],
+        createdBy: 'adam',
+        createdDate: 0,
+        modifiedDate: 0,
+      },
+    ]
+    vi.mocked(listCharacterizations).mockResolvedValue(success(characterizations))
+    mounted = await mountView()
+
+    const table = mounted.wrapper.findComponent(AnalysisDataTable)
+    table.vm.$emit('update:sortBy', [{ key: 'createdBy', order: 'asc' }])
+    await flushPromises()
+    expect(table.props('items')[0]?.name).toBe('Alpha')
+
+    table.vm.$emit('update:sortBy', [{ key: 'id', order: 'desc' }])
+    await flushPromises()
+    expect(table.props('items')[0]?.name).toBe('Zulu')
+
+    table.vm.$emit('update:sortBy', [{ key: 'description', order: 'asc' }])
+    await flushPromises()
+    expect(table.props('items')[0]?.name).toBe('Alpha')
+
+    table.vm.$emit('update:sortBy', [])
+    await flushPromises()
+    expect(table.props('items')[0]?.name).toBe('Zulu')
   })
 
   it('shows empty state when there are no items', async () => {
@@ -169,7 +252,7 @@ describe('CharacterizationsView', () => {
     mounted = await mountView()
 
     // After i18n migration, the empty-state label uses the generic "No data" string
-    expect(mounted.wrapper.text()).toContain('No data')
+    expect(mounted.wrapper.text()).toContain(tr('cc.list.empty'))
   })
 
   it('search input drives the store filter (after debounce)', async () => {
@@ -190,6 +273,56 @@ describe('CharacterizationsView', () => {
     expect(store.filterTerm).toBe('Diabetes')
 
     vi.useRealTimers()
+  })
+
+  it('filters by author and selected tags', async () => {
+    vi.mocked(listCharacterizations).mockResolvedValue(success(sampleList))
+    mounted = await mountView()
+    const store = useCharacterizationStore()
+
+    store.setFilters({
+      searchQuery: '',
+      author: 'admin',
+      selectedTags: [],
+      createdDateRange: {},
+      modifiedDateRange: {},
+    })
+    await flushPromises()
+
+    expect(mounted.wrapper.text()).toContain('Diabetes Cohort Profile')
+    expect(mounted.wrapper.text()).not.toContain('Hypertension Profile')
+
+    store.setFilters({
+      searchQuery: '',
+      author: '',
+      selectedTags: ['Cardiovascular'],
+      createdDateRange: {},
+      modifiedDateRange: {},
+    })
+    await flushPromises()
+
+    expect(mounted.wrapper.text()).not.toContain('Diabetes Cohort Profile')
+    expect(mounted.wrapper.text()).toContain('Hypertension Profile')
+  })
+
+  it('clicking a tag chip toggles that tag filter', async () => {
+    vi.mocked(listCharacterizations).mockResolvedValue(success(sampleList))
+    mounted = await mountView()
+    const store = useCharacterizationStore()
+    const tag = mounted.wrapper
+      .findAll('.analysis-data-table__tag')
+      .find(chip => chip.text() === 'Some Tag')
+
+    expect(tag).toBeDefined()
+    await tag!.trigger('click')
+    await flushPromises()
+    expect(store.filters.selectedTags).toEqual(['Some Tag'])
+    expect(mounted.wrapper.text()).not.toContain('Hypertension Profile')
+
+    await tag!.trigger('click')
+    await flushPromises()
+    expect(store.filters.selectedTags).toEqual([])
+    expect(mounted.wrapper.text()).toContain('Hypertension Profile')
   })
 
   it('clicking Create navigates to /characterizations/new', async () => {
@@ -220,5 +353,52 @@ describe('CharacterizationsView', () => {
     await flushPromises()
 
     expect(router.currentRoute.value.path).toBe('/characterizations/1')
+  })
+
+  it('opens a copied characterization returned by the store', async () => {
+    vi.mocked(listCharacterizations).mockResolvedValue(success(sampleList))
+    mounted = await mountView()
+    const store = useCharacterizationStore()
+    vi.spyOn(store, 'copy').mockResolvedValue({ id: 99 } as never)
+
+    mounted.wrapper.findComponent(AnalysisDataTable).vm.$emit('copy', sampleList[0])
+    await flushPromises()
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+    await flushPromises()
+
+    expect(store.copy).toHaveBeenCalledWith(1)
+    expect(mounted.router.currentRoute.value.path).toBe('/characterizations/99')
+  })
+
+  it('removes a selected characterization after confirmation', async () => {
+    vi.mocked(listCharacterizations).mockResolvedValue(success(sampleList))
+    mounted = await mountView()
+    const store = useCharacterizationStore()
+    vi.spyOn(store, 'remove').mockResolvedValue(true)
+
+    mounted.wrapper.findComponent(AnalysisDataTable).vm.$emit('delete', sampleList[0])
+    await flushPromises()
+
+    const deleteButtons = mounted.wrapper.findAll('button').filter(button => button.text() === 'Delete')
+    await deleteButtons.at(-1)!.trigger('click')
+    await flushPromises()
+
+    expect(store.remove).toHaveBeenCalledWith(1)
+  })
+
+  it('keeps the delete dialog usable when removal fails', async () => {
+    vi.mocked(listCharacterizations).mockResolvedValue(success(sampleList))
+    mounted = await mountView()
+    const store = useCharacterizationStore()
+    vi.spyOn(store, 'remove').mockRejectedValue(new Error('Delete failed'))
+
+    mounted.wrapper.findComponent(AnalysisDataTable).vm.$emit('delete', sampleList[0])
+    await flushPromises()
+
+    const deleteButtons = mounted.wrapper.findAll('button').filter(button => button.text() === 'Delete')
+    await deleteButtons.at(-1)!.trigger('click')
+    await flushPromises()
+
+    expect(store.remove).toHaveBeenCalledWith(1)
   })
 })

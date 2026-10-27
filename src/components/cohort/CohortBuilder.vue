@@ -30,7 +30,7 @@
         icon="mdi-arrow-left"
         @click="handleBackToCurrent"
       >
-        {{ t('common.backToCurrent', 'Back to current') }}
+        {{ t('common.backToCurrent') }}
       </AtlasButton>
     </div>
 
@@ -64,7 +64,7 @@
             @show-concept-sets="showConceptSetsDialog = true"
             @show-validation="showValidationDialog = true"
             @show-versions="showVersionsDialog = true"
-            @show-tags="showTagsDialog = true"
+            @show-tags="openTagsDialog"
             @show-access="showAccessDialog = true"
           />
         </template>
@@ -80,6 +80,7 @@
             @export-copy="handleExportCopy"
             @view-json="openJsonDialog"
             @view-sql="openSqlDialog"
+            @view-print-friendly="openPrintFriendlyDialog"
           />
         </template>
       </AtlasActionToolbar>
@@ -103,7 +104,7 @@
       v-model="showAccessDialog"
       entity-type="COHORT_DEFINITION"
       :entity-id="cohortId"
-      :title="t('components.access.configureAccess', 'Configure access').value"
+      :title="t('components.access.configureAccess').value"
       :subtitle="cohortName || undefined"
       @close="showAccessDialog = false"
     />
@@ -122,6 +123,11 @@
       :filename="sqlExportFilename()"
     />
 
+    <cohort-print-friendly-dialog
+      v-model="showPrintFriendlyDialog"
+      :expression="printFriendlyExpression"
+    />
+
     <AtlasAlert
       v-if="loadError"
       class="cohort-builder__load-error"
@@ -134,7 +140,7 @@
           variant="ghost"
           @click="retryLoad"
         >
-          {{ t('common.retry', 'Retry') }}
+          {{ t('common.retry') }}
         </AtlasButton>
       </template>
     </AtlasAlert>
@@ -170,7 +176,6 @@
     <concept-search-dialog
       v-model="isConceptSearchDialogOpen"
       :domain-filter="selectedConceptDomainFilter"
-      :pre-selected-concepts="currentlySelectedConcepts"
       @concepts-selected="handleConceptsSelected"
     />
 
@@ -217,14 +222,14 @@
         color="primary"
       />
       <div class="text-h6 mt-4">
-        {{ t('common.loadingWithDots', 'Loading...') }}
+        {{ t('common.loadingWithDots') }}
       </div>
     </v-overlay>
 
     <AtlasDialog
       v-model="showVersionsDialog"
       eyebrow="VERSIONS"
-      :title="t('cohortDefinitions.cohortDefinitionManager.tabs.versions', 'Versions').value"
+      :title="t('cohortDefinitions.cohortDefinitionManager.tabs.versions').value"
       max-width="1200"
       @close="showVersionsDialog = false"
     >
@@ -238,28 +243,25 @@
     <AtlasDialog
       v-model="showUnsavedDialog"
       eyebrow="COHORT"
-      :title="t('common.unsavedChanges', 'Unsaved changes').value"
+      :title="t('common.unsavedChanges').value"
       max-width="440"
       @close="cancelLeaveUnsaved"
     >
       {{
-        t(
-          'common.unsavedWarning',
-          'You have unsaved changes. Are you sure you want to leave? Your changes will be lost.'
-        ).value
+        t('common.unsavedWarning').value
       }}
       <template #actions>
         <AtlasButton
           variant="ghost"
           @click="cancelLeaveUnsaved"
         >
-          {{ t('common.cancel', 'Cancel').value }}
+          {{ t('common.cancel').value }}
         </AtlasButton>
         <AtlasButton
           variant="danger"
           @click="confirmLeaveUnsaved"
         >
-          {{ t('common.discard', 'Discard changes').value }}
+          {{ t('common.discard').value }}
         </AtlasButton>
       </template>
     </AtlasDialog>
@@ -268,7 +270,7 @@
     <AtlasDialog
       v-model="showDeleteConceptSetDialog"
       eyebrow="CONCEPT SET"
-      :title="t('components.cohortBuilder.deleteConceptSetTitle', 'Delete concept set?').value"
+      :title="t('components.conceptSetDelete.title').value"
       max-width="480"
       @close="cancelDeleteConceptSet"
     >
@@ -278,14 +280,14 @@
           variant="ghost"
           @click="cancelDeleteConceptSet"
         >
-          {{ t('common.cancel', 'Cancel').value }}
+          {{ t('common.cancel').value }}
         </AtlasButton>
         <AtlasButton
           variant="danger"
           data-testid="confirm-delete-concept-set"
           @click="confirmDeleteConceptSet"
         >
-          {{ t('common.delete', 'Delete').value }}
+          {{ t('common.delete').value }}
         </AtlasButton>
       </template>
     </AtlasDialog>
@@ -294,6 +296,7 @@
     <tag-selection-dialog
       v-model="showTagsDialog"
       :selected-tags="cohortTags"
+      :on-apply="handleTagsApply"
       @update:selected-tags="handleTagsUpdate"
     />
   </div>
@@ -304,10 +307,11 @@ import { AtlasAlert, AtlasButton, AtlasDialog, AtlasIcon, AtlasProgressCircular,
 import { ref, computed, onMounted, onBeforeUnmount, watch, toRef, toRaw } from 'vue'
 import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
 import { logger } from '@/utils/logger'
+import { assignedTags, syncAssetTags } from '@/utils/asset-tags'
 import { useCohortStore, type CohortDocument } from '@/stores/cohort'
 import { useConceptSetsStore } from '@/stores/concept-sets'
 import { useWebAPIStore } from '@/stores/webapi'
-import { provideCriteriaSelection, type CriteriaSelectionService } from '@/composables/useCriteriaSelection'
+import { useCriteriaConceptSearch } from '@/composables/useCriteriaConceptSearch'
 import { useCirceConceptSetPicker } from '@/composables/useCirceConceptSetPicker'
 import { useI18n } from '@/composables/useI18n'
 import { useCohortValidation } from '@/composables/useCohortValidation'
@@ -316,14 +320,14 @@ import { useEntityAccess } from '@/composables/useEntityAccess'
 import { getCohortDefinition } from '@/services/cohort-definition.service'
 import { getConceptSetById } from '@/services/concept-set.service'
 import type { CohortDefinition, ConceptSetReference } from '@/models/cohort.types'
-import type { Concept as SearchConcept, ConceptSetItem } from '@/models/concept-set.types'
+import type { ConceptSetItem } from '@/models/concept-set.types'
 import type { ConceptSetSelectionTarget } from '@/components/circe/criteria/criteria-editor.types'
 import ConceptSetSelectionDialog from './ConceptSetSelectionDialog.vue'
 import ConceptSearchDialog from './ConceptSearchDialog.vue'
 import ConceptSetEditor from '../concepts/ConceptSetEditor.vue'
 import CohortExpressionEditor from '@/components/cohort-editor/CohortExpressionEditor.vue'
 import { defaultExpression as blankExpression } from '@/models/circe-types'
-import type { CohortExpression, Concept as CirceConcept, ConceptSetItem as CirceConceptSetItem } from '@/models/circe-types'
+import type { CohortExpression, ConceptSetItem as CirceConceptSetItem } from '@/models/circe-types'
 import { unassignConceptSetId, walkConceptSetReferences } from '@/components/cohort-editor/concept-set-usage'
 import { normalizeForCirce } from '@/components/cohort-editor/normalize'
 import { describeImportProblems, validateCohortExpression } from '@/components/cohort-editor/import-validation'
@@ -342,6 +346,7 @@ import { resolveSaveDisabledReason } from '@/utils/save-disabled-reason'
 import ConceptSetsListDialog from './ConceptSetsListDialog.vue'
 import CohortJsonDialog from './CohortJsonDialog.vue'
 import CohortSqlDialog from './CohortSqlDialog.vue'
+import CohortPrintFriendlyDialog from './CohortPrintFriendlyDialog.vue'
 import ValidationMessagesDialog from './ValidationMessagesDialog.vue'
 import TagSelectionDialog from '@/components/tags/TagSelectionDialog.vue'
 import { EntityAccessDialog } from '@/components/access'
@@ -486,7 +491,9 @@ const showTagsDialog = ref(false)
 const showAccessDialog = ref(false)
 const showJsonDialog = ref(false)
 const showSqlDialog = ref(false)
+const showPrintFriendlyDialog = ref(false)
 const sqlDialogExpression = ref<CohortExpression | null>(null)
+const printFriendlyExpression = ref<CohortExpression | null>(null)
 // Snapshot of the expression taken when the JSON dialog opens, so the
 // editor is not re-seeded under the user while they type.
 const jsonDialogSource = ref('')
@@ -501,33 +508,16 @@ const loadError = ref<string | null>(null)
 // Set to the id we just saved, so the props.id watcher can tell our own route
 // adoption apart from a real navigation to another cohort.
 const adoptedSavedId = ref<string | null>(null)
-const isConceptSearchDialogOpen = ref(false)
-const selectedConceptDomainFilter = ref<string | undefined>(undefined)
-// ── Criteria selection service ────────────────────────────────────────────────
-// ConceptArray.vue components at any depth request concepts through this
-// service. Concept-set selection flows through useCirceConceptSetPicker so the
-// dialog/request lifecycle stays centralized.
-const pendingConceptsCallback = ref<((concepts: CirceConcept[]) => void) | null>(null)
-
-// Named so it can be part of the defineExpose contract below: descendant
-// components reach it via inject (useCriteriaSelection), but nothing in this
-// shallow-mounted tree does, so tests exercise it through the same named
-// object rather than reaching into Vue's private instance-provides field.
-const criteriaSelectionService: CriteriaSelectionService = {
-  requestConceptSet() {
-    // not used by CohortExpressionEditor — concept-set events flow through the
-    // centralized useCirceConceptSetPicker request lifecycle.
-  },
-  requestConcepts(domainFilter: string | undefined, onSelect: (concepts: CirceConcept[]) => void) {
-    pendingConceptsCallback.value = onSelect
-    selectedConceptDomainFilter.value = domainFilter
-    isConceptSearchDialogOpen.value = true
-  },
-  editConceptSet(conceptSet: { id: number | string; name: string; items?: unknown[] }) {
-    handleEditConceptSet(conceptSet)
-  },
-}
-provideCriteriaSelection(criteriaSelectionService)
+// ── Concept search ───────────────────────────────────────────────────────────
+// ConceptArray.vue components at any depth (e.g. Gender/Race attributes)
+// request a vocabulary search through the shared service. `criteriaSelectionService`
+// is named so tests can drive it via the defineExpose contract below.
+const {
+  conceptSearchOpen: isConceptSearchDialogOpen,
+  conceptSearchDomainFilter: selectedConceptDomainFilter,
+  onConceptsSelected: handleConceptsSelected,
+  service: criteriaSelectionService,
+} = useCriteriaConceptSearch()
 
 const showError = ref(false)
 const errorMessage = ref('')
@@ -615,7 +605,7 @@ const canSave = computed(() => {
 
 const saveDisabledReason = computed<string>(() =>
   resolveSaveDisabledReason({
-    entity: tv('const.entityName.cohort', 'cohort'),
+    entity: tv('const.entityName.cohort'),
     isNew: cohortId.value === null,
     hasName: cohortName.value.trim().length > 0,
     hasPermission: canSavePermission.value,
@@ -661,7 +651,6 @@ function createStateSnapshot(): string {
   return JSON.stringify({
     name: cohortName.value,
     description: cohortDescription.value,
-    tags: cohortTags.value,
     expression: expression.value,
   })
 }
@@ -672,9 +661,6 @@ const hasUnsavedChanges = computed(() => {
   }
   return createStateSnapshot() !== loadedSnapshot.value
 })
-
-/** Pre-populated concept list for the concept search dialog (no-op in new flow) */
-const currentlySelectedConcepts = computed(() => [])
 
 // Versions configuration
 const versionsConfig = computed<VersionsConfig>(() => {
@@ -790,14 +776,46 @@ watch(
 
 // Tags
 const cohortTags = computed(() => cohortStore.currentCohort?.tags || [])
-const tagCount = computed(() => cohortTags.value.length)
+const tagCount = computed(() => assignedTags(cohortTags.value).length)
 const loadedTags = ref<Tag[]>([])
 
 function handleTagsUpdate(newTags: Tag[]) {
   if (cohortStore.currentCohort) {
     cohortStore.currentCohort.tags = newTags
-    cohortStore.markDirty()
   }
+}
+
+function openTagsDialog() {
+  if (cohortId.value && !isPreviewingVersion.value) {
+    showTagsDialog.value = true
+  }
+}
+
+async function handleTagsApply(newTags: Tag[]): Promise<boolean> {
+  const savedId = cohortId.value
+  if (!savedId) return false
+
+  const { assignTagToCohort, unassignTagFromCohort } = await import(
+    '@/services/cohort-definition.service'
+  )
+
+  const result = await syncAssetTags(loadedTags.value, newTags, {
+    assign: tagId => assignTagToCohort(savedId, tagId),
+    unassign: tagId => unassignTagFromCohort(savedId, tagId),
+  })
+
+  loadedTags.value = assignedTags(result.tags)
+  handleTagsUpdate(result.tags)
+
+  if (!result.success) {
+    errorMessage.value = result.failures
+      .map(({ action, tag, error }) => error ?? `Failed to ${action} tag "${tag.name}"`)
+      .join('; ')
+    showError.value = true
+    return false
+  }
+
+  return true
 }
 
 onMounted(async () => {
@@ -978,8 +996,8 @@ async function loadCohort(id: string) {
       logger.error('CohortBuilder', `Failed to load cohort ${id}`, atlasCohortResult.error)
       failLoad(
         atlasCohortResult.error.status === 422
-          ? tv('components.cohortBuilder.parseError', 'Failed to parse cohort definition')
-          : tv('components.cohortBuilder.loadError', 'Failed to load cohort')
+          ? tv('components.cohortBuilder.parseError')
+          : tv('components.cohortBuilder.loadError')
       )
       return
     }
@@ -987,7 +1005,7 @@ async function loadCohort(id: string) {
     const atlasCohort = atlasCohortResult.data
     if (atlasCohort.expressionType && atlasCohort.expressionType !== 'SIMPLE_EXPRESSION') {
       logger.error('CohortBuilder', `Unsupported expression type: ${atlasCohort.expressionType}`)
-      failLoad(tv('components.cohortBuilder.loadError', 'Failed to load cohort'))
+      failLoad(tv('components.cohortBuilder.loadError'))
       return
     }
 
@@ -1012,7 +1030,7 @@ async function loadCohort(id: string) {
   } catch (error) {
     logger.error('CohortBuilder', `Error loading cohort ${id}`, error)
     if (loadToken !== latestLoadToken) return
-    failLoad(tv('components.cohortBuilder.loadError', 'Failed to load cohort'))
+    failLoad(tv('components.cohortBuilder.loadError'))
   }
 }
 
@@ -1024,7 +1042,7 @@ function applyDefinition(def: CohortDocument) {
   replaceExpression(def.expression ?? defaultExpression())
   cohortName.value = def.name ?? ''
   cohortDescription.value = def.description || ''
-  loadedTags.value = [...(def.tags || [])]
+  loadedTags.value = assignedTags(def.tags)
   loadedSnapshot.value = createStateSnapshot()
   markExpressionRevision()
   isLoadingCohort.value = false
@@ -1054,36 +1072,6 @@ function syncToStoreDefinition() {
 
 watch(() => cohortStore.reloadRequest, syncToStoreDefinition)
 
-function handleConceptsSelected(
-  concepts: SearchConcept[]
-) {
-  if (concepts.length === 0 || !pendingConceptsCallback.value) {
-    isConceptSearchDialogOpen.value = false
-    pendingConceptsCallback.value = null
-    return
-  }
-
-  // Convert camelCase concepts to UPPERCASE Circe format
-  const convertedConcepts: CirceConcept[] = concepts.map(c => ({
-    CONCEPT_ID: c.conceptId,
-    CONCEPT_NAME: c.conceptName,
-    STANDARD_CONCEPT_CAPTION: c.standardConcept === 'S' ? 'Standard' : c.standardConcept === 'C' ? 'Classification' : '',
-    INVALID_REASON_CAPTION: c.invalidReason ?? '',
-    CONCEPT_CODE: c.conceptCode,
-    DOMAIN_ID: c.domainId,
-    VOCABULARY_ID: c.vocabularyId,
-    CONCEPT_CLASS_ID: c.conceptClassId,
-    VALID_START_DATE: '',
-    VALID_END_DATE: '',
-    STANDARD_CONCEPT: c.standardConcept,
-    INVALID_REASON: c.invalidReason,
-  }))
-
-  const callback = pendingConceptsCallback.value
-  pendingConceptsCallback.value = null
-  callback(convertedConcepts)
-  isConceptSearchDialogOpen.value = false
-}
 /**
  * Called when user clicks "Edit" on a concept set (from chip or dialog)
  */
@@ -1186,16 +1174,12 @@ const deleteConceptSetWarning = computed(() => {
   const count = conceptSetPendingDeleteUsage.value
   const usage =
     count === 1
-      ? t('components.cohortBuilder.deleteConceptSetUsageOne', '1 criterion still uses it').value
-      : t('components.cohortBuilder.deleteConceptSetUsageMany', '{count} criteria still use it', {
+      ? t('components.conceptSetDelete.usageOne').value
+      : t('components.conceptSetDelete.usageMany', {
           count,
         }).value
 
-  return t(
-    'components.cohortBuilder.deleteConceptSetWarning',
-    'Deleting "{name}" will clear it from those criteria, and a criterion with no concept set matches its entire domain. {usage}.',
-    { name, usage }
-  ).value
+  return t('components.conceptSetDelete.warning', { name, usage }).value
 })
 
 /**
@@ -1257,7 +1241,7 @@ function handleConceptSetApplied(set: { id?: number | string; name: string; item
 async function handleSave(): Promise<{ id?: number; name?: string }> {
   if (!canSave.value) return {}
 
-  const { saveCohortDefinition, assignTagToCohort, unassignTagFromCohort } = await import(
+  const { saveCohortDefinition } = await import(
     '@/services/cohort-definition.service'
   )
 
@@ -1294,7 +1278,7 @@ async function handleSave(): Promise<{ id?: number; name?: string }> {
     const savedCohortResult = await saveCohortDefinition(atlasDefinition)
 
     if (!savedCohortResult.success) {
-      errorMessage.value = tv('components.cohortBuilder.saveToServerError', 'Failed to save cohort to server')
+      errorMessage.value = tv('components.cohortBuilder.saveToServerError')
       showError.value = true
       return {}
     }
@@ -1303,52 +1287,10 @@ async function handleSave(): Promise<{ id?: number; name?: string }> {
     const savedId = savedCohort.id
 
     if (savedId === undefined) {
-      errorMessage.value = tv('components.cohortBuilder.saveToServerError', 'Failed to save cohort to server')
+      errorMessage.value = tv('components.cohortBuilder.saveToServerError')
       showError.value = true
       return {}
     }
-
-    // Sync tags via separate API calls
-    const currentTags = cohortTags.value
-    const previousTags = loadedTags.value
-    const tagsToAdd = currentTags.filter(cur => !previousTags.some(p => p.id === cur.id))
-    const tagsToRemove = previousTags.filter(p => !currentTags.some(cur => cur.id === p.id))
-    const tagFailures: string[] = []
-
-    // The tag calls are independent of each other, so they go out together:
-    // awaiting them one at a time cost a round-trip per changed tag.
-    const tagSyncs = [
-      ...tagsToAdd.map(tag => ({ tag, action: 'assign' as const })),
-      ...tagsToRemove.map(tag => ({ tag, action: 'unassign' as const })),
-    ].filter(sync => sync.tag.id !== undefined)
-
-    const outcomes = await Promise.allSettled(
-      tagSyncs.map(async ({ tag, action }) => ({
-        tag,
-        action,
-        result:
-          action === 'assign'
-            ? await assignTagToCohort(savedId, tag.id!)
-            : await unassignTagFromCohort(savedId, tag.id!),
-      }))
-    )
-
-    for (const outcome of outcomes) {
-      // A rejection is a transport failure, not a per-tag one: rethrow so the
-      // save's own catch reports it, as it did when these were awaited inline.
-      if (outcome.status === 'rejected') throw outcome.reason
-      const { tag, action, result } = outcome.value
-      if (result.success) continue
-      logger.warn('CohortBuilder', `Failed to ${action} tag ${tag.id}`, result.error)
-      tagFailures.push(result.error.message || `Failed to ${action} tag "${tag.name}"`)
-    }
-
-    if (tagFailures.length > 0) {
-      errorMessage.value = tagFailures.join('; ')
-      showError.value = true
-    }
-
-    loadedTags.value = [...currentTags]
 
     // No expression: the store already references the live document, and
     // handing it the save-time clone would replace what the user sees with a
@@ -1364,7 +1306,7 @@ async function handleSave(): Promise<{ id?: number; name?: string }> {
     loadedSnapshot.value = createStateSnapshot()
     markExpressionRevision()
 
-    successMessage.value = tv('components.cohortBuilder.saveSuccess', 'Cohort saved successfully')
+    successMessage.value = tv('components.cohortBuilder.saveSuccess')
     showSuccess.value = true
 
     // Adopt the new id in the route. `cohortId` is derived from props.id, so a
@@ -1387,7 +1329,7 @@ async function handleSave(): Promise<{ id?: number; name?: string }> {
     errorMessage.value =
       error instanceof Error
         ? error.message
-        : tv('components.cohortBuilder.saveError', 'Failed to save cohort')
+        : tv('components.cohortBuilder.saveError')
     showError.value = true
     return {}
   }
@@ -1408,7 +1350,7 @@ async function handleApplyJson(json: string) {
   try {
     parsed = JSON.parse(json)
   } catch {
-    errorMessage.value = tv('components.cohortBuilder.jsonInvalidExpression', 'Not a valid Atlas cohort expression')
+    errorMessage.value = tv('components.cohortBuilder.jsonInvalidExpression')
     showError.value = true
     return
   }
@@ -1418,7 +1360,7 @@ async function handleApplyJson(json: string) {
   // than dropped on the way in (#328).
   const result = validateCohortExpression(parsed)
   if (!result.ok) {
-    errorMessage.value = tv('components.cohortBuilder.jsonImportFailed', 'Import failed: {error}', {
+    errorMessage.value = tv('components.cohortBuilder.jsonImportFailed', {
       error: describeImportProblems(result.problems).join('; '),
     })
     showError.value = true
@@ -1429,10 +1371,7 @@ async function handleApplyJson(json: string) {
   replaceExpression(result.expression)
 
   showJsonDialog.value = false
-  successMessage.value = tv(
-    'components.cohortBuilder.jsonApplied',
-    'Cohort JSON applied — review the builder, then save'
-  )
+  successMessage.value = tv('components.cohortBuilder.jsonApplied')
   showSuccess.value = true
 }
 
@@ -1473,6 +1412,12 @@ function openSqlDialog() {
   showSqlDialog.value = true
 }
 
+/** Open the legacy WebAPI-rendered, readable cohort definition view. */
+function openPrintFriendlyDialog() {
+  printFriendlyExpression.value = normalizeForCirce(toRaw(expression.value))
+  showPrintFriendlyDialog.value = true
+}
+
 function handleExportDownload() {
   const json = exportableExpression()
   const blob = new Blob([json], { type: 'application/json' })
@@ -1482,7 +1427,7 @@ function handleExportDownload() {
   a.download = exportFilename()
   a.click()
   URL.revokeObjectURL(url)
-  successMessage.value = tv('components.cohortBuilder.exportDownloaded', 'Cohort JSON downloaded')
+  successMessage.value = tv('components.cohortBuilder.exportDownloaded')
   showSuccess.value = true
 }
 
@@ -1490,14 +1435,11 @@ async function handleExportCopy() {
   const json = exportableExpression()
   try {
     await navigator.clipboard.writeText(json)
-    successMessage.value = tv(
-      'components.cohortBuilder.copiedToClipboard',
-      'Cohort JSON copied to clipboard'
-    )
+    successMessage.value = tv('components.cohortBuilder.copiedToClipboard')
     showSuccess.value = true
   } catch (err) {
     logger.error('CohortBuilder', 'Clipboard copy failed', err)
-    errorMessage.value = tv('components.cohortBuilder.copyFailed', 'Could not copy to clipboard')
+    errorMessage.value = tv('components.cohortBuilder.copyFailed')
     showError.value = true
   }
 }
@@ -1595,9 +1537,7 @@ defineExpose({
   openVersionsDialog: () => {
     showVersionsDialog.value = true
   },
-  openTagsDialog: () => {
-    showTagsDialog.value = true
-  },
+  openTagsDialog,
   openAccessDialog: () => {
     showAccessDialog.value = true
   },
@@ -1607,13 +1547,13 @@ defineExpose({
   handleExportCopy,
   openJsonDialog,
   openSqlDialog,
+  openPrintFriendlyDialog,
   // Test-support contract: routing/UI state and pure helpers that have no
   // child component to observe or drive them through. Named here instead of
   // reached via Vue's private `$.setupState`/`$.provides`, so a rename shows
   // up as a compile error in this file rather than a silent test break.
   cohortName,
   cohortDescription,
-  pendingConceptsCallback,
   loadedTags,
   loadedSnapshot,
   isConfirmingNavigation,

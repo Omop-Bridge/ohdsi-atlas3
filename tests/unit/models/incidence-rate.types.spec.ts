@@ -23,6 +23,21 @@ describe('Incidence Rate schemas', () => {
     expect(parsed.expression.strata).toHaveLength(1)
   })
 
+  it('retains expanded display groups and assigned child metadata in tags', () => {
+    const parsed = IncidenceRateSchema.parse({
+      ...sampleIR,
+      tags: [
+        { id: 17, name: 'Group', color: null, groups: [] },
+        { id: 18, name: 'Child', groups: [{ id: 17, name: 'Group', color: null }] },
+      ],
+    })
+
+    expect(parsed.tags).toEqual([
+      { id: 17, name: 'Group', color: null, groups: [] },
+      { id: 18, name: 'Child', groups: [{ id: 17, name: 'Group', color: null }] },
+    ])
+  })
+
   it('rejects an expression missing required fields', () => {
     const r = IncidenceRateExpressionSchema.safeParse({})
     expect(r.success).toBe(false)
@@ -65,6 +80,16 @@ describe('Incidence Rate schemas', () => {
     expect(r.success).toBe(true)
   })
 
+  it('IncidenceRateExecutionInfoSchema gives cancellation precedence over complete status', () => {
+    const execution = IncidenceRateExecutionInfoSchema.parse({
+      id: { analysisId: 1, sourceId: 2 },
+      status: 'COMPLETE',
+      isCanceled: true,
+    })
+
+    expect(execution.status).toBe('CANCELED')
+  })
+
   it('IncidenceRateInfoBySourceSchema defaults summaryList to []', () => {
     const r = IncidenceRateInfoBySourceSchema.parse({
       executionInfo: {
@@ -85,6 +110,14 @@ describe('Incidence Rate schemas', () => {
       treemapData: '{}',
     })
     expect(r.treemapData).toBe('{}')
+  })
+
+  it('derives a rate from person-years without converting the API value from days', () => {
+    const r = IncidenceRateInfoBySourceSchema.parse({
+      executionInfo: { id: { analysisId: 1, sourceId: 2 }, status: 'COMPLETE' },
+      summaryList: [{ targetId: 1, outcomeId: 2, totalPersons: 31946, cases: 582, timeAtRisk: 54297 }],
+    })
+    expect(r.summaryList[0]?.rate).toBeCloseTo(582 / 54297)
   })
 
   it('exposes the expected constants', () => {

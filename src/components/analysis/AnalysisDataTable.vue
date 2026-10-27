@@ -1,6 +1,6 @@
 <template>
   <AtlasDataTable
-    v-model:sort-by="sortByModel"
+    :sort-by="sortByModel"
     :headers="tableHeaders"
     :items="items"
     :loading="loading"
@@ -8,6 +8,7 @@
     hide-default-footer
     class="analysis-data-table"
     :data-testid="testid"
+    @update:sort-by="handleSortByUpdate"
   >
     <template #[`item.${nameKey}`]="{ item }">
       <div class="analysis-data-table__name-cell">
@@ -28,7 +29,7 @@
           {{ getName(item) }}
         </span>
         <div
-          v-if="hasTags(item)"
+          v-if="hasTags(item) && !hasTagColumn"
           class="analysis-data-table__tag-rail"
         >
           <AtlasChip
@@ -36,8 +37,12 @@
             :key="tag.name"
             size="sm"
             variant="flat"
-            class="analysis-data-table__tag"
+            :class="{
+              'analysis-data-table__tag': true,
+              'analysis-data-table__tag--selected': selectedTags.includes(tag.name),
+            }"
             :style="{ backgroundColor: tagColor(tag.color), color: tagContrastColor(tag.color) }"
+            @click.stop="handleTagClick(tag.name)"
           >
             {{ tag.name }}
           </AtlasChip>
@@ -49,6 +54,35 @@
             +{{ overflowTagCount(item) }}
           </span>
         </div>
+      </div>
+    </template>
+
+    <template #[`item.tags`]="{ item }">
+      <div
+        v-if="hasTags(item)"
+        class="analysis-data-table__tag-rail"
+      >
+        <AtlasChip
+          v-for="tag in visibleTags(item)"
+          :key="tag.name"
+          size="sm"
+          variant="flat"
+          :class="{
+            'analysis-data-table__tag': true,
+            'analysis-data-table__tag--selected': selectedTags.includes(tag.name),
+          }"
+          :style="{ backgroundColor: tagColor(tag.color), color: tagContrastColor(tag.color) }"
+          @click.stop="handleTagClick(tag.name)"
+        >
+          {{ tag.name }}
+        </AtlasChip>
+        <span
+          v-if="overflowTagCount(item) > 0"
+          class="analysis-data-table__tag-overflow"
+          :title="overflowTagsTitle(item)"
+        >
+          +{{ overflowTagCount(item) }}
+        </span>
       </div>
     </template>
 
@@ -77,25 +111,19 @@
     <template #[`item.actions`]="{ item }">
       <div class="analysis-data-table__row-actions">
         <AtlasIconButton
-          v-if="canOpenItem(item)"
-          icon="mdi-pencil"
-          v-bind="{ ariaLabel: t('configuration.tagManagement.edit', 'Edit').value }"
-          variant="text"
-          size="sm"
-          @click.stop="$emit('open', item)"
-        />
-        <AtlasIconButton
           v-if="enableCopy"
+          title="Clone"
+          v-bind="{ ariaLabel: t('common.copy').value }"
           icon="mdi-content-copy"
-          v-bind="{ ariaLabel: t('common.copy', 'Copy').value }"
           variant="text"
           size="sm"
           :disabled="!canCopyItem(item)"
           @click.stop="$emit('copy', item)"
         />
         <AtlasIconButton
+          :title="t('common.delete').value"
+          v-bind="{ ariaLabel: t('common.delete').value }"
           icon="mdi-delete"
-          v-bind="{ ariaLabel: t('common.delete', 'Delete').value }"
           variant="text"
           tone="danger"
           size="sm"
@@ -127,7 +155,7 @@
             mdi-database-off-outline
           </AtlasIcon>
           <div class="analysis-data-table__empty-title">
-            {{ emptyText ?? t('common.noData', 'No items yet.').value }}
+            {{ emptyText ?? t('components.analysisDataTable.empty').value }}
           </div>
           <slot name="empty-action" />
         </div>
@@ -149,6 +177,7 @@
 import { AtlasChip, AtlasDataTable, AtlasIcon, AtlasIconButton, AtlasSkeleton } from '@/components/ui'
 import { computed, ref, useSlots, watch } from 'vue'
 import { useI18n } from '@/composables/useI18n'
+import { displayTags } from '@/utils/asset-tags'
 import { formatDate, formatRelativeTime, lastTouchedDate } from '@/utils/date-format'
 import { tagColor, tagContrastColor } from '@/utils/tag-color'
 
@@ -166,6 +195,7 @@ interface Props {
   testid?: string
   maxVisibleTags?: number
   descriptionLimit?: number
+  selectedTags?: string[]
   /**
    * Optional permission callbacks. Each receives the row item and returns
    * whether the action button should be enabled. Defaulting to `true` keeps
@@ -191,15 +221,18 @@ const props = withDefaults(defineProps<Props>(), {
   testid: undefined,
   maxVisibleTags: 2,
   descriptionLimit: 80,
+  selectedTags: () => [],
   canCopyItem: () => () => true,
   canDeleteItem: () => () => true,
   canOpenItem: () => () => true,
 })
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'open', item: T): void
   (e: 'copy', item: T): void
   (e: 'delete', item: T): void
+  (e: 'tag-click', tagName: string): void
+  (e: 'update:sortBy', sortBy: { key: string; order: 'asc' | 'desc' }[]): void
 }>()
 
 const { t } = useI18n()
@@ -217,6 +250,18 @@ watch(
     sortByModel.value = [...v]
   }
 )
+
+function handleSortByUpdate(value: { key: string; order?: 'asc' | 'desc' }[]) {
+  const normalized = value.flatMap(item =>
+    item.order ? [{ key: item.key, order: item.order }] : []
+  )
+  sortByModel.value = normalized
+  emit('update:sortBy', normalized)
+}
+
+function handleTagClick(tagName: string) {
+  emit('tag-click', tagName)
+}
 
 // Forward any item.<key> or other custom slots that the consumer passed
 // in but that we don't render ourselves.
@@ -243,7 +288,7 @@ function getName(item: T): string {
 
 function tagsOf(item: T): Tag[] {
   const v = (item as Record<string, unknown>).tags
-  return Array.isArray(v) ? (v as Tag[]) : []
+  return Array.isArray(v) ? displayTags(v as Tag[]) : []
 }
 
 function hasTags(item: T): boolean {
@@ -289,6 +334,8 @@ const tableHeaders = computed(() =>
   )
 )
 
+const hasTagColumn = computed(() => props.headers.some(header => header.key === 'tags'))
+
 function dateField(item: T, key: string): string | number | undefined {
   const v = (item as Record<string, unknown>)[key]
   return typeof v === 'string' || typeof v === 'number' ? v : undefined
@@ -330,6 +377,9 @@ function formatUser(user: unknown): string {
 .analysis-data-table :deep(tbody tr:hover) .analysis-data-table__row-actions {
   opacity: 1;
 }
+.analysis-data-table :deep(tbody tr:focus-within) .analysis-data-table__row-actions {
+  opacity: 1;
+}
 
 .analysis-data-table__name-cell {
   display: flex;
@@ -365,6 +415,14 @@ function formatUser(user: unknown): string {
   height: 20px;
 }
 
+.analysis-data-table__tag {
+  cursor: pointer;
+}
+
+.analysis-data-table__tag--selected {
+  box-shadow: 0 0 0 2px rgb(var(--v-theme-primary));
+}
+
 .analysis-data-table__tag-overflow {
   font-size: 0.75rem;
   color: var(--atlas-color-on-surface-variant);
@@ -376,9 +434,9 @@ function formatUser(user: unknown): string {
 
 .analysis-data-table__row-actions {
   display: flex;
-  gap: 2px;
+  gap: 8px;
   justify-content: flex-end;
-  opacity: 0.5;
+  opacity: 0;
   transition: opacity 120ms ease;
 }
 

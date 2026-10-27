@@ -14,7 +14,7 @@
         size="sm"
         data-testid="char-toolbar-mode-perAnalysis"
       >
-        {{ t('cc.viewEdit.workbench.modePerAnalysis', 'Per-analysis').value }}
+        {{ t('cc.viewEdit.workbench.modePerAnalysis').value }}
       </AtlasButton>
       <AtlasButton
         toggle
@@ -22,7 +22,7 @@
         size="sm"
         data-testid="char-toolbar-mode-table1"
       >
-        {{ t('cc.viewEdit.workbench.modeTable1', 'Baseline').value }}
+        {{ t('cc.viewEdit.workbench.modeTable1').value }}
       </AtlasButton>
       <AtlasButton
         toggle
@@ -30,7 +30,7 @@
         size="sm"
         data-testid="char-toolbar-mode-dashboard"
       >
-        {{ t('cc.viewEdit.workbench.modeDashboard', 'Overview').value }}
+        {{ t('cc.viewEdit.workbench.modeDashboard').value }}
       </AtlasButton>
     </v-btn-toggle>
 
@@ -46,13 +46,13 @@
         v-if="activeRun.personCount"
         class="char-toolbar__muted"
       >
-        · {{ activeRun.personCount.toLocaleString() }} {{ tv('columns.results', 'rows').toLowerCase() }}
+        · {{ tv('components.characterizationWorkbench.personCount', { count: activeRun.personCount.toLocaleString() }) }}
       </span>
     </AtlasChip>
 
     <AtlasTextField
       :model-value="threshold"
-      :label="t('cc.viewEdit.results.thresholdLabel', 'Threshold ≥').value"
+      :label="t('cc.viewEdit.results.thresholdLabel').value"
       type="number"
       variant="outlined"
       hide-details
@@ -65,15 +65,26 @@
 
     <AtlasSpacer />
 
-    <AtlasButton
-      size="sm"
-      variant="secondary"
-      icon="mdi-tune-variant"
-      data-testid="char-toolbar-configure"
-      @click="$emit('open-configure')"
+    <AtlasMenu
+      :model-value="configureOpen"
+      attach="body"
+      location="top end"
+      :close-on-content-click="false"
+      @update:model-value="$emit('update:configureOpen', $event)"
     >
-      {{ t('cc.viewEdit.workbench.configure', 'Configure').value }}
-    </AtlasButton>
+      <template #activator="{ props: activatorProps }">
+        <AtlasButton
+          v-bind="activatorProps"
+          size="sm"
+          variant="secondary"
+          icon="mdi-tune-variant"
+          data-testid="char-toolbar-configure"
+        >
+          {{ t('cc.viewEdit.workbench.configure').value }}
+        </AtlasButton>
+      </template>
+      <slot name="configure-panel" />
+    </AtlasMenu>
     <AtlasButton
       variant="ghost"
       size="sm"
@@ -82,13 +93,13 @@
       data-testid="char-toolbar-export"
       @click="$emit('export')"
     >
-      {{ t('cc.viewEdit.results.exportAll', 'Export CSV').value }}
+      {{ t('common.exportCsv').value }}
     </AtlasButton>
   </div>
 </template>
 
 <script setup lang="ts">
-import { AtlasButton, AtlasChip, AtlasSpacer, AtlasTextField } from '@/components/ui'
+import { AtlasButton, AtlasChip, AtlasMenu, AtlasSpacer, AtlasTextField } from '@/components/ui'
 import { useI18n } from '@/composables/useI18n'
 
 export type ViewMode = 'table1' | 'perAnalysis' | 'dashboard'
@@ -104,12 +115,13 @@ defineProps<{
   activeRun: ActiveRun | null
   threshold: number
   hasResults: boolean
+  configureOpen: boolean
 }>()
 
 defineEmits<{
   'update:mode': [mode: ViewMode]
   'update:threshold': [value: number]
-  'open-configure': []
+  'update:configureOpen': [value: boolean]
   'export': []
 }>()
 

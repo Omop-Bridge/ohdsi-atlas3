@@ -2,53 +2,62 @@
   <div class="pathway-settings">
     <div class="pathway-settings__row">
       <div class="pathway-settings__label">
-        {{ t('pathway.combinationWindow', 'Collapse window (days)') }}
+        {{ t('pathway.combinationWindow') }}
       </div>
-      <AtlasSelect
-        :model-value="modelValue.combinationWindow as (typeof combinationWindowOptions)[number]"
+      <VCombobox
+        :model-value="modelValue.combinationWindow"
         :items="combinationWindowOptions"
-        :aria-label="t('pathway.combinationWindow', 'Collapse window (days)').value"
+        :aria-label="t('pathway.combinationWindow').value"
         variant="underlined"
         hide-details
-        :readonly="readonly"
-        @update:model-value="(v) => v !== null && update('combinationWindow', v as number)"
+        :disabled="readonly"
+        type="number"
+        step="1"
+        inputmode="numeric"
+        @update:model-value="updateNumber('combinationWindow', $event)"
       />
     </div>
     <div class="pathway-settings__row">
       <div class="pathway-settings__label">
-        {{ t('pathway.minCellCount', 'Minimum cell count') }}
+        {{ t('pathway.minCellCount') }}
       </div>
-      <AtlasSelect
-        :model-value="modelValue.minCellCount as (typeof minCellCountOptions)[number]"
+      <VCombobox
+        :model-value="modelValue.minCellCount"
         :items="minCellCountOptions"
-        :aria-label="t('pathway.minCellCount', 'Minimum cell count').value"
+        :aria-label="t('pathway.minCellCount').value"
         variant="underlined"
         hide-details
-        :readonly="readonly"
-        @update:model-value="(v) => v !== null && update('minCellCount', v as number)"
+        :disabled="readonly"
+        type="number"
+        step="1"
+        inputmode="numeric"
+        @update:model-value="updateNumber('minCellCount', $event)"
       />
     </div>
     <div class="pathway-settings__row">
       <div class="pathway-settings__label">
-        {{ t('pathway.maxDepth', 'Maximum path length') }}
+        {{ t('pathway.maxDepth') }}
       </div>
-      <AtlasSelect
-        :model-value="modelValue.maxDepth as (typeof maxDepthOptions)[number]"
+      <VCombobox
+        :model-value="modelValue.maxDepth"
         :items="maxDepthOptions"
-        :aria-label="t('pathway.maxDepth', 'Maximum path length').value"
+        :aria-label="t('pathway.maxDepth').value"
         variant="underlined"
         hide-details
-        :readonly="readonly"
-        @update:model-value="(v) => v !== null && update('maxDepth', v as number)"
+        :disabled="readonly"
+        type="number"
+        step="1"
+        inputmode="numeric"
+        @update:model-value="updateNumber('maxDepth', $event)"
       />
     </div>
     <div class="pathway-settings__row">
       <div class="pathway-settings__label">
-        {{ t('pathway.allowRepeats', 'Allow repeats') }}
+        {{ t('pathway.allowRepeats') }}
       </div>
       <AtlasSwitch
         :model-value="modelValue.allowRepeats"
-        :aria-label="t('pathway.allowRepeats', 'Allow repeats').value"
+        :aria-label="t('pathway.allowRepeats').value"
         hide-details
         :readonly="readonly"
         class="pathway-settings__switch"
@@ -59,7 +68,8 @@
 </template>
 
 <script setup lang="ts">
-import { AtlasSelect, AtlasSwitch } from '@/components/ui'
+import { VCombobox } from 'vuetify/components'
+import { AtlasSwitch } from '@/components/ui'
 import { useI18n } from '@/composables/useI18n'
 import type { PathwayDesign } from '@/models/pathway.types'
 import {
@@ -79,12 +89,25 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const combinationWindowOptions = [...COMBINATION_WINDOW_OPTIONS]
-const minCellCountOptions = [...MIN_CELL_COUNT_OPTIONS]
-const maxDepthOptions = [...MAX_DEPTH_OPTIONS]
+const combinationWindowOptions: number[] = [...COMBINATION_WINDOW_OPTIONS]
+const minCellCountOptions: number[] = [...MIN_CELL_COUNT_OPTIONS]
+const maxDepthOptions: number[] = [...MAX_DEPTH_OPTIONS]
 
 function update<K extends keyof PathwayDesign>(key: K, value: PathwayDesign[K]) {
   emit('update:modelValue', { ...props.modelValue, [key]: value })
+}
+
+function updateNumber(
+  key: 'combinationWindow' | 'minCellCount' | 'maxDepth',
+  value: unknown
+) {
+  const numericValue = typeof value === 'number' ? value : Number(value)
+  const minimum = key === 'maxDepth' ? 1 : 0
+  const maximum = key === 'maxDepth' ? 10 : Infinity
+
+  if (Number.isInteger(numericValue) && numericValue >= minimum && numericValue <= maximum) {
+    update(key, numericValue)
+  }
 }
 </script>
 
@@ -96,7 +119,7 @@ function update<K extends keyof PathwayDesign>(key: K, value: PathwayDesign[K]) 
 }
 .pathway-settings__row {
   display: grid;
-  grid-template-columns: 1fr 110px;
+  grid-template-columns: 220px 110px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
 }

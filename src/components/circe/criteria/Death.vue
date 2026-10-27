@@ -106,17 +106,17 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const deathTitle = computed(() => 'a death of')
+const deathTitle = computed(() => t('components.death.title').value)
 
-const addAttributeLabel = computed(() => 'Add attribute...')
+const addAttributeLabel = computed(() => t('components.criteria.addAttribute').value)
 
-const selectConceptSetLabel = computed(() => t('components.conceptAddBox.selectConceptSet', 'Select Concept Set').value)
+const selectConceptSetLabel = computed(() => t('components.conceptAddBox.selectConceptSet').value)
 
 const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   {
     key: 'Age',
-    label: 'Age',
-    description: 'Filter by age at time of event',
+    label: t('criteriaAttributes.age.label').value,
+    description: t('criteriaAttributes.age.description').value,
     kind: 'numericRange',
     componentProps: () => createSchemaFieldProps(
       ensureObjectField(deathData.value, 'Age', () => ({ Value: undefined, Op: 'gte', Extent: undefined })) as NumericRange
@@ -131,13 +131,14 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'Gender',
-    label: 'Gender',
-    description: 'Filter by patient gender',
+    label: t('criteriaAttributes.gender.label').value,
+    description: t('criteriaAttributes.gender.description').value,
     kind: 'conceptArray',
     componentProps: () => ({
       binding: {
         concepts: toRef(deathData.value, 'Gender'),
       } satisfies ConceptArrayBinding,
+      domainFilter: 'Gender',
     }),
     init: () => {
       deathData.value.Gender = [] as ConceptArray
@@ -149,8 +150,8 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'GenderCS',
-    label: 'Gender Concept Set',
-    description: 'Filter gender by a concept set',
+    label: t('criteriaAttributes.genderCS.label').value,
+    description: t('criteriaAttributes.genderCS.description').value,
     kind: 'conceptSet',
     componentProps: () => createConceptSetComponentProps(
       ensureObjectField(deathData.value, 'GenderCS', () => ({ CodesetId: undefined, IsExclusion: false })) as ConceptSetSelection,
@@ -169,8 +170,8 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'OccurrenceStartDate',
-    label: 'Death Date',
-    description: 'Filter by date',
+    label: t('components.death.attributes.occurrenceStartDate.label').value,
+    description: t('components.death.attributes.occurrenceStartDate.description').value,
     kind: 'dateRange',
     componentProps: () => createSchemaFieldProps(
       ensureObjectField(deathData.value, 'OccurrenceStartDate', () => ({ Value: '', Op: 'gte', Extent: undefined })) as DateRange
@@ -185,8 +186,8 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'DateAdjustment',
-    label: 'Date Adjustment',
-    description: 'Adjust event dates',
+    label: t('criteriaAttributes.dateAdjustment.label').value,
+    description: t('criteriaAttributes.dateAdjustment.description').value,
     kind: 'dateAdjustment',
     componentProps: () => createSchemaFieldProps(
       ensureObjectField(deathData.value, 'DateAdjustment', () => ({ StartWith: 'START_DATE', StartOffset: 0, EndWith: 'END_DATE', EndOffset: 0 })) as DateAdjustment
@@ -201,8 +202,8 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'DeathType',
-    label: 'Death Type',
-    description: 'Filter by death type',
+    label: t('criteriaAttributes.deathType.label').value,
+    description: t('criteriaAttributes.deathType.description').value,
     kind: 'conceptArray',
     componentProps: () => ({
       binding: {
@@ -218,12 +219,12 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
       delete deathData.value.DeathType
       delete deathData.value.DeathTypeExclude
     },
-    isActive: () => deathData.value.DeathType != null || deathData.value.DeathTypeExclude != null,
+    isActive: () => deathData.value.DeathType != null,
   },
   {
     key: 'DeathTypeCS',
-    label: 'Death Type Concept Set',
-    description: 'Filter death type by a concept set',
+    label: t('criteriaAttributes.deathTypeCS.label').value,
+    description: t('criteriaAttributes.deathTypeCS.description').value,
     kind: 'conceptSet',
     componentProps: () => createConceptSetComponentProps(
       ensureObjectField(deathData.value, 'DeathTypeCS', () => ({ CodesetId: undefined, IsExclusion: false })) as ConceptSetSelection,
@@ -242,28 +243,28 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'DeathSourceConcept',
-    label: 'Death Source Concept',
-    description: 'Filter by death source concept',
+    label: t('criteriaAttributes.deathSourceConcept.label').value,
+    description: t('criteriaAttributes.deathSourceConcept.description').value,
     kind: 'conceptSet',
     componentProps: () => createConceptSetComponentProps(
-      deathSourceConceptModel,
+      deathSourceConceptModel as ConceptSetSelection,
       props.conceptSets,
-      t('components.eventCard.selectSourceConcept', 'Select Source Concept').value,
+      t('components.eventCard.selectSourceConcept').value,
       target => emit('select-concept-set', target),
       target => emit('edit-concept-set', target),
     ),
     init: () => {
-      deathData.value.DeathSourceConcept = undefined
+      deathSourceConceptModel.activate()
     },
     clear: () => {
-      delete deathData.value.DeathSourceConcept
+      deathSourceConceptModel.deactivate()
     },
-    isActive: () => 'DeathSourceConcept' in deathData.value,
+    isActive: () => deathSourceConceptModel.isActive(),
   },
   {
     key: 'CorrelatedCriteria',
-    label: 'Nested Criteria',
-    description: 'Add nested criteria group',
+    label: t('criteriaAttributes.correlatedCriteria.label').value,
+    description: t('criteriaAttributes.correlatedCriteria.description').value,
     kind: 'criteriaGroup',
     componentProps: () => ({
       group: ensureObjectField(deathData.value, 'CorrelatedCriteria', createDefaultCriteriaGroup) as CriteriaGroup,
@@ -294,7 +295,7 @@ const death = () => deathData.value
 
 const deathConceptSetModel = createConceptSetModel(death, 'CodesetId') as ConceptSetSelection
 
-const deathSourceConceptModel = createConceptSetModel(death, 'DeathSourceConcept') as ConceptSetSelection
+const deathSourceConceptModel = createConceptSetModel(death, 'DeathSourceConcept')
 
 function addAttribute(row: CriteriaAttributeSpec) {
   row.init()

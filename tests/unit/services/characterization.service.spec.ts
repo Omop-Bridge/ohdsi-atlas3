@@ -25,6 +25,8 @@ import {
   getCharacterization,
   createCharacterization,
   updateCharacterization,
+  assignCharacterizationTag,
+  unassignCharacterizationTag,
   deleteCharacterization,
   copyCharacterization,
   characterizationNameExists,
@@ -77,7 +79,7 @@ describe('services/characterization.service', () => {
         expect.fail(`expected success, got ${result.error.message}`)
       }
       const [url] = mockFetch.mock.calls[0]
-      expect(url).toContain('/cohort-characterization?size=10000')
+      expect(url).toContain('/cohort-characterization?size=1000000')
     })
 
     it('handles a `{ content: [...] }` page wrapper', async () => {
@@ -237,6 +239,30 @@ describe('services/characterization.service', () => {
       expect(sent.stratas[0].id).toBe(42)
       expect(sent.stratas[1]).not.toHaveProperty('id')
       expect(sent.stratas[1].name).toBe('New strata')
+    })
+
+    it('omits tags so assignment is handled only by tag endpoints', async () => {
+      ok(validDesign)
+
+      await createCharacterization({ ...validDesign, tags: [{ id: 7, name: 'Clinical' }] })
+
+      const [, init] = mockFetch.mock.calls[0]
+      expect(JSON.parse(init.body as string)).not.toHaveProperty('tags')
+    })
+  })
+
+  describe('tag assignment', () => {
+    it('assigns and unassigns tags through dedicated endpoints', async () => {
+      ok(undefined)
+      await expect(assignCharacterizationTag(42, 7)).resolves.toMatchObject({ success: true })
+      expect(mockFetch.mock.calls[0][0]).toContain('/cohort-characterization/42/tag')
+      expect(mockFetch.mock.calls[0][1].method).toBe('POST')
+      expect(mockFetch.mock.calls[0][1].body).toBe('7')
+
+      ok(undefined)
+      await expect(unassignCharacterizationTag(42, 7)).resolves.toMatchObject({ success: true })
+      expect(mockFetch.mock.calls[1][0]).toContain('/cohort-characterization/42/tag/7')
+      expect(mockFetch.mock.calls[1][1].method).toBe('DELETE')
     })
   })
 
@@ -449,6 +475,19 @@ describe('services/characterization.service', () => {
       }
     })
 
+    it('normalizes a stopped execution to canceled', async () => {
+      ok([{ id: 337, status: 'STOPPED', sourceKey: 'sample', exitMessage: 'Canceled by user request' }])
+
+      const result = await listCharacterizationExecutions(1)
+
+      expect(result.success).toBe(true)
+      if (result.success) {
+        expect(result.data).toMatchObject([{ id: 337, status: 'CANCELED', sourceKey: 'sample' }])
+      } else {
+        expect.fail(`expected success, got ${result.error.message}`)
+      }
+    })
+
     it('reports a parse failure as ApiResult', async () => {
       ok([{ id: 1, status: 'BOGUS_STATUS', sourceKey: 'CDM_A' }])
 
@@ -587,12 +626,12 @@ describe('services/characterization.service', () => {
   })
 
   describe('getCharacterizationDesignSnapshot', () => {
-    it('returns the raw design', async () => {
-      ok({ some: 'snapshot' })
+    it('returns the generation design snapshot', async () => {
+      ok({ name: 'Snapshot', cohorts: [], featureAnalyses: [], stratas: [] })
       const result = await getCharacterizationDesignSnapshot(99)
       expect(result.success).toBe(true)
       if (result.success) {
-        expect(result.data).toEqual({ some: 'snapshot' })
+        expect(result.data).toMatchObject({ name: 'Snapshot', cohorts: [] })
       } else {
         expect.fail(`expected success, got ${result.error.message}`)
       }
@@ -619,30 +658,76 @@ describe('services/characterization.service', () => {
   })
 
   describe('getCharacterizationResults', () => {
-    it('returns the raw array', async () => {
-      ok([{ row: 1 }, { row: 2 }])
+    it('preserves the structured report envelope', async () => {
+      ok({
+        count: 2,
+        prevalenceThreshold: 0.01,
+        showEmptyResults: false,
+        reports: [{
+          analysisId: 1,
+          analysisName: 'Conditions',
+          cohorts: [{ cohortId: 10, cohortName: 'Target' }],
+          domainIds: ['CONDITION'],
+          items: [{ row: 1 }],
+        }],
+      })
 
       const result = await getCharacterizationResults(1, { thresholdValuePct: 0 })
 
       expect(result.success).toBe(true)
       if (result.success) {
-        expect(result.data).toHaveLength(2)
+        expect(result.data.count).toBe(2)
+        expect(result.data.reports).toHaveLength(1)
+        expect(result.data.reports[0]?.cohorts).toEqual([{ cohortId: 10, cohortName: 'Target' }])
+        expect(result.data.reports[0]?.items).toEqual([{ row: 1 }])
       } else {
         expect.fail(`expected success, got ${result.error.message}`)
       }
     })
 
-    it('flattens the `{ reports: [...] }` wrapper', async () => {
-      ok({ reports: [{ analysisId: 1, items: [{ row: 1 }] }, { analysisId: 2, items: [{ row: 2 }] }] })
+    it('parses the per-cohort strata counts', async () => {
+      ok({
+        reports: [],
+        strataCounts: { '10': { '0': 100, '3': 40 } },
+      })
 
-      const result = await getCharacterizationResults(1, { thresholdValuePct: 0 })
+      const result = await getCharacterizationResults(1, {})
 
       expect(result.success).toBe(true)
       if (result.success) {
-        expect(result.data).toHaveLength(2)
+        expect(result.data.strataCounts).toEqual({ '10': { '0': 100, '3': 40 } })
       } else {
         expect.fail(`expected success, got ${result.error.message}`)
       }
+    })
+
+    it('rejects a flat result array', async () => {
+      ok([{ row: 1 }, { row: 2 }])
+
+      const result = await getCharacterizationResults(1, { thresholdValuePct: 0 })
+
+      expect(result.success).toBe(false)
+    })
+
+    it('accepts nullable summary-report fields returned by WebAPI', async () => {
+      ok({
+        count: 1,
+        prevalenceThreshold: 0.01,
+        showEmptyResults: null,
+        reports: [{
+          analysisId: null,
+          analysisName: 'All prevalence covariates',
+          cohorts: [{ cohortId: 10, cohortName: 'Target' }],
+          domainIds: ['DEMOGRAPHICS'],
+          items: [{ analysisId: 1 }],
+          faType: null,
+          isSummary: true,
+        }],
+      })
+
+      const result = await getCharacterizationResults(1, {})
+
+      expect(result.success).toBe(true)
     })
 
     it('reports an unexpected shape as ApiResult failure carrying the offending payload', async () => {

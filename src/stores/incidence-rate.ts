@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type {
   IncidenceRate,
   IncidenceRateExpression,
@@ -24,6 +24,8 @@ import {
 import type { Tag } from '@/models/webapi.types'
 import { getIncidenceRateVersion } from '@/services/incidence-rate-versions.service'
 import { logger } from '@/utils/logger'
+import { assignedTags, syncAssetTags } from '@/utils/asset-tags'
+import { useI18n } from '@/composables/useI18n'
 
 export interface IncidenceRateValidationError {
   field: string
@@ -60,6 +62,7 @@ function emptyIR(): IncidenceRate {
 }
 
 export const useIncidenceRateStore = defineStore('incidence-rate', () => {
+  const { tv } = useI18n()
   const currentIR = ref<IncidenceRate | null>(null)
   const isDirty = ref(false)
   const lastAutoSave = ref<Date | null>(null)
@@ -190,6 +193,14 @@ export const useIncidenceRateStore = defineStore('incidence-rate', () => {
     const rule = currentIR.value.expression.strata[index]
     if (!rule) return
     currentIR.value.expression.strata[index] = { ...rule, ...partial }
+    markDirty()
+  }
+
+  function applyStratifyRule(index: number, draft: StratifyRule) {
+    if (!currentIR.value) return
+    const rule = currentIR.value.expression.strata[index]
+    if (!rule) return
+    Object.assign(rule, JSON.parse(JSON.stringify(draft)) as StratifyRule)
     markDirty()
   }
 
@@ -347,19 +358,24 @@ export const useIncidenceRateStore = defineStore('incidence-rate', () => {
       return
     }
     if (!ir.name || ir.name.trim() === '') {
-      errors.push({ field: 'name', message: 'Name is required', severity: 'error' })
+      errors.push({ field: 'name', message: tv('commonErrors.nameRequired'), severity: 'error' })
+    }
+    if (!ir.expression?.timeAtRisk) {
+      errors.push({ field: 'expression', message: tv('incidenceRate.validation.designIncomplete'), severity: 'error' })
+      validationErrors.value = errors
+      return
     }
     if (ir.expression.targetIds.length === 0) {
       errors.push({
         field: 'targetIds',
-        message: 'At least one target cohort is required',
+        message: tv('incidenceRate.validation.targetRequired'),
         severity: 'error',
       })
     }
     if (ir.expression.outcomeIds.length === 0) {
       errors.push({
         field: 'outcomeIds',
-        message: 'At least one outcome cohort is required',
+        message: tv('incidenceRate.validation.outcomeRequired'),
         severity: 'error',
       })
     }
@@ -367,7 +383,9 @@ export const useIncidenceRateStore = defineStore('incidence-rate', () => {
     if (tar.start.DateField === tar.end.DateField && tar.end.Offset <= tar.start.Offset) {
       errors.push({
         field: 'timeAtRisk',
-        message: 'Time-at-risk end must be after start when both reference the same date',
+        message: tv(
+          'incidenceRate.validation.timeAtRiskOrder'
+        ),
         severity: 'error',
       })
     }
@@ -375,7 +393,7 @@ export const useIncidenceRateStore = defineStore('incidence-rate', () => {
       if (ir.expression.studyWindow.startDate && ir.expression.studyWindow.endDate && ir.expression.studyWindow.startDate >= ir.expression.studyWindow.endDate) {
         errors.push({
           field: 'studyWindow',
-          message: 'Study window start must be before end',
+          message: tv('incidenceRate.validation.studyWindowOrder'),
           severity: 'error',
         })
       }
@@ -383,40 +401,52 @@ export const useIncidenceRateStore = defineStore('incidence-rate', () => {
     validationErrors.value = errors
   }
 
+  // Track only inputs used by validateIR. Vue batches this watcher within a
+  // tick, keeping Run disabled state current without revalidating for
+  // descriptions, tags, concept sets, or other unrelated design changes.
+  const validationInputs = computed(() => {
+    const ir = currentIR.value
+    if (!ir) return null
+    const { expression } = ir
+    if (!expression?.timeAtRisk) return [ir.name, 'incomplete-design']
+    const { timeAtRisk, studyWindow } = expression
+    return [
+      ir.name,
+      expression.targetIds.join(','),
+      expression.outcomeIds.join(','),
+      timeAtRisk.start.DateField,
+      timeAtRisk.start.Offset,
+      timeAtRisk.end.DateField,
+      timeAtRisk.end.Offset,
+      studyWindow?.startDate ?? '',
+      studyWindow?.endDate ?? '',
+    ]
+  })
+
+  watch(validationInputs, () => {
+    void validateIR()
+  }, { immediate: true })
+
   async function addTag(tag: Tag): Promise<boolean> {
     if (!currentIR.value?.id) return false
-    const result = await assignIncidenceRateTag(currentIR.value.id, tag.id!)
-    if (!result.success) {
-      logger.error('IncidenceRate', 'addTag failed', result.error)
-      return false
-    }
-    if (!currentIR.value.tags.some(t => t.id === tag.id)) {
-      currentIR.value.tags.push(tag)
-      // tag mutations are metadata — do not mark dirty
-    }
-    return true
+    return syncTags([...assignedTags(currentIR.value.tags), tag])
   }
 
   async function removeTag(tagId: number): Promise<boolean> {
     if (!currentIR.value?.id) return false
-    const result = await unassignIncidenceRateTag(currentIR.value.id, tagId)
-    if (!result.success) {
-      logger.error('IncidenceRate', 'removeTag failed', result.error)
-      return false
-    }
-    if (currentIR.value) {
-      currentIR.value.tags = currentIR.value.tags.filter(t => t.id !== tagId)
-    }
-    return true
+    return syncTags(assignedTags(currentIR.value.tags).filter(tag => tag.id !== tagId))
   }
 
-  async function syncTags(newTags: Tag[]): Promise<void> {
-    if (!currentIR.value?.id) return
-    const current = currentIR.value.tags
-    const toAdd = newTags.filter(n => !current.some(c => c.id === n.id))
-    const toRemove = current.filter(c => !newTags.some(n => n.id === c.id))
-    for (const t of toAdd) await addTag(t)
-    for (const t of toRemove) await removeTag(t.id!)
+  async function syncTags(newTags: Tag[]): Promise<boolean> {
+    if (!currentIR.value?.id) return false
+    const id = currentIR.value.id
+    const result = await syncAssetTags(currentIR.value.tags, newTags, {
+      assign: tagId => assignIncidenceRateTag(id, tagId),
+      unassign: tagId => unassignIncidenceRateTag(id, tagId),
+    })
+    currentIR.value.tags = result.tags
+    if (!result.success) logger.error('IncidenceRate', 'Tag synchronization failed', result.failures)
+    return result.success
   }
 
   function setExecutionInfo(sourceKey: string, info: IncidenceRateInfoBySource) {
@@ -437,7 +467,9 @@ export const useIncidenceRateStore = defineStore('incidence-rate', () => {
     rateMultiplier.value = m
   }
 
-  const canSave = computed(() => isDirty.value && !hasErrors.value && !isPreviewMode.value)
+  const canSave = computed(
+    () => isDirty.value && !!currentIR.value?.name?.trim() && !isPreviewMode.value
+  )
   const canGenerate = computed(
     () =>
       !isDirty.value &&
@@ -572,6 +604,7 @@ export const useIncidenceRateStore = defineStore('incidence-rate', () => {
     clearStudyWindow,
     addStratifyRule,
     updateStratifyRule,
+    applyStratifyRule,
     removeStratifyRule,
     moveStratifyRule,
     // lifecycle

@@ -28,6 +28,8 @@ vi.mock('@/services/characterization.service', () => ({
   getCharacterization: vi.fn(),
   createCharacterization: vi.fn(),
   updateCharacterization: vi.fn(),
+  assignCharacterizationTag: vi.fn(),
+  unassignCharacterizationTag: vi.fn(),
   deleteCharacterization: vi.fn(),
   copyCharacterization: vi.fn(),
   characterizationNameExists: vi.fn(),
@@ -74,8 +76,8 @@ import {
   getCharacterization,
   createCharacterization,
   updateCharacterization,
-  deleteCharacterization,
-  copyCharacterization,
+  assignCharacterizationTag,
+  unassignCharacterizationTag,
   listCharacterizations,
   listCharacterizationExecutions,
   exportCharacterization,
@@ -86,6 +88,7 @@ import { getCohorts } from '@/services/cohort-definition.service'
 import CharacterizationBuilderView from '@/views/CharacterizationBuilderView.vue'
 import { success, failure } from '@/types/api'
 import { ApiError } from '@/services/api-error'
+import { tr } from '../../helpers/i18n-mock'
 
 const vuetify = createVuetify({ components, directives })
 
@@ -181,6 +184,8 @@ describe('CharacterizationBuilderView', () => {
     // is set (edit-mode tests), so this must resolve instead of returning
     // undefined — an unresolved ApiResult crashes `result.success` in the store.
     vi.mocked(listCharacterizationExecutions).mockResolvedValue(success([]))
+    vi.mocked(assignCharacterizationTag).mockResolvedValue(success(undefined))
+    vi.mocked(unassignCharacterizationTag).mockResolvedValue(success(undefined))
   })
 
   afterEach(() => {
@@ -197,15 +202,8 @@ describe('CharacterizationBuilderView', () => {
 
     expect(mounted.wrapper.find('[data-testid="char-builder-run"]').exists()).toBe(false)
 
-    // Copy / Delete buttons now always render (disabled when not in edit
-    // mode) so the toolbar shape stays stable across builders. Check that
-    // they're present AND disabled in new mode.
-    const copyBtn = mounted.wrapper.find('[data-testid="char-builder-copy"]')
-    const deleteBtn = mounted.wrapper.find('[data-testid="char-builder-delete"]')
-    expect(copyBtn.exists()).toBe(true)
-    expect(deleteBtn.exists()).toBe(true)
-    expect(copyBtn.attributes('disabled')).toBeDefined()
-    expect(deleteBtn.attributes('disabled')).toBeDefined()
+    expect(mounted.wrapper.find('[data-testid="char-builder-copy"]').exists()).toBe(false)
+    expect(mounted.wrapper.find('[data-testid="char-builder-delete"]').exists()).toBe(false)
 
     const nameInput = mounted.wrapper.find(
       '[data-testid="char-builder-name"]'
@@ -224,9 +222,22 @@ describe('CharacterizationBuilderView', () => {
     ).element as HTMLInputElement
     expect(nameInput.value).toBe('Diabetes Cohort Profile')
 
-    expect(mounted.wrapper.find('[data-testid="char-builder-copy"]').exists()).toBe(true)
-    expect(mounted.wrapper.find('[data-testid="char-builder-delete"]').exists()).toBe(true)
+    expect(mounted.wrapper.find('[data-testid="char-builder-copy"]').exists()).toBe(false)
+    expect(mounted.wrapper.find('[data-testid="char-builder-delete"]').exists()).toBe(false)
     expect(mounted.wrapper.find('[data-testid="char-builder-access-icon"]').exists()).toBe(true)
+  })
+
+  it('counts only directly assigned tags in the manage-tags badge', async () => {
+    vi.mocked(getCharacterization).mockResolvedValue(success({
+      ...sampleCharacterization,
+      tags: [
+        { id: 17, name: 'test', groups: [] },
+        { id: 18, name: 'Some Tag', groups: [{ id: 17, name: 'test' }] },
+      ],
+    }))
+    mounted = await mountBuilder('/characterizations/42', { id: '42' })
+
+    expect(mounted.wrapper.find('[data-testid="char-builder-tags-badge"] .v-badge__badge').text()).toBe('1')
   })
 
   it('opens access configuration from the versions-side action bar icon', async () => {
@@ -242,7 +253,7 @@ describe('CharacterizationBuilderView', () => {
     expect(accessDialog.props('modelValue')).toBe(true)
     expect(accessDialog.props('entityType')).toBe('COHORT_CHARACTERIZATION')
     expect(accessDialog.props('entityId')).toBe(42)
-    expect(accessDialog.props('title')).toBe('Configure access')
+    expect(accessDialog.props('title')).toBe(tr('components.access.configureAccess'))
     expect(accessDialog.props('subtitle')).toBe('Diabetes Cohort Profile')
 
     await accessDialog.vm.$emit('close')
@@ -285,6 +296,24 @@ describe('CharacterizationBuilderView', () => {
     expect(versionsDialog?.props('modelValue')).toBe(true)
   })
 
+  it('persists characterization tags when the dialog applies them', async () => {
+    vi.mocked(getCharacterization).mockResolvedValue(success({
+      ...sampleCharacterization,
+      tags: [{ id: 1, name: 'Old' }],
+    }))
+    mounted = await mountBuilder('/characterizations/42', { id: '42' })
+    await flushPromises()
+
+    await mounted.wrapper.get('[data-testid="char-builder-tags-icon"]').trigger('click')
+    const dialog = mounted.wrapper.findComponent({ name: 'TagSelectionDialog' })
+    const onApply = dialog.props('onApply') as (tags: Array<{ id: number; name: string }>) => Promise<boolean>
+
+    await expect(onApply([{ id: 2, name: 'New' }])).resolves.toBe(true)
+
+    expect(unassignCharacterizationTag).toHaveBeenCalledWith(42, 1)
+    expect(assignCharacterizationTag).toHaveBeenCalledWith(42, 2)
+  })
+
   it('covers save failure branches and empty-name validation', async () => {
     mounted = await mountBuilder('/characterizations/new')
     await flushPromises()
@@ -293,24 +322,21 @@ describe('CharacterizationBuilderView', () => {
     const setupState = builder.vm as any
 
     await setupState.$.setupState.handleSave()
-    expect(mounted.wrapper.findComponent({ name: 'AtlasSnackbar' }).props('text')).toBe('The name is empty.')
+    expect(mounted.wrapper.findComponent({ name: 'AtlasSnackbar' }).props('text')).toBe(tr('components.nameValidation.empty'))
   })
 
-  it('covers copy, export, and delete early-return branches', async () => {
+  it('covers the export early-return branch and omits list-level actions', async () => {
     mounted = await mountBuilder('/characterizations/new')
     await flushPromises()
 
     const builder = mounted.wrapper.findComponent(CharacterizationBuilderView)
     const setupState = builder.vm as any
 
-    await setupState.$.setupState.handleSaveCopy()
     await setupState.$.setupState.handleExport()
-    setupState.$.setupState.handleDeleteClick()
-    await setupState.$.setupState.confirmDelete()
 
-    expect(copyCharacterization).not.toHaveBeenCalled()
     expect(exportCharacterization).not.toHaveBeenCalled()
-    expect(deleteCharacterization).not.toHaveBeenCalled()
+    expect(mounted.wrapper.find('[data-testid="char-builder-copy"]').exists()).toBe(false)
+    expect(mounted.wrapper.find('[data-testid="char-builder-delete"]').exists()).toBe(false)
   })
 
   it('logs picker load failures on mount', async () => {
@@ -336,7 +362,7 @@ describe('CharacterizationBuilderView', () => {
         {
           criteria: {
             Type: 'ALL',
-            CriteriaList: [{ ConditionOccurrence: { CodesetId: 11 } }],
+            CriteriaList: [{ Criteria: { ConditionOccurrence: { CodesetId: 11 } } }],
             DemographicCriteriaList: [],
             Groups: [],
           },
@@ -356,6 +382,38 @@ describe('CharacterizationBuilderView', () => {
     expect(setupState.$.setupState.draft.strataConceptSets?.some((set: { name: string }) => set.name === 'Brand new set')).toBe(true)
     expect(setupState.$.setupState.draft.strataConceptSets?.some((set: { name: string }) => set.name === 'Unused set updated')).toBe(true)
     setupState.$.setupState.cancelDeleteConceptSet()
+  })
+
+  it('confirms deletion of a used concept set and clears its criteria references', async () => {
+    mounted = await mountBuilder('/characterizations/new')
+    const builder = mounted.wrapper.findComponent(CharacterizationBuilderView)
+    const setupState = (builder.vm as any).$.setupState
+    setupState.onDraftChange({
+      ...sampleCharacterization,
+      stratas: [
+        {
+          id: 'subgroup-1',
+          name: 'Subgroup 1',
+          criteria: {
+            Type: 'ALL',
+            CriteriaList: [{ ConditionOccurrence: { CodesetId: 11 } }],
+            DemographicCriteriaList: [],
+            Groups: [],
+          },
+        },
+      ],
+      strataConceptSets: [{ id: 11, name: 'Used set', expression: { items: [] } } as never],
+    })
+
+    setupState.conceptSetPendingDelete = { id: 11, name: 'Used set', items: [] }
+    setupState.conceptSetPendingDeleteUsage = 1
+    setupState.showDeleteConceptSetDialog = true
+    expect(setupState.showDeleteConceptSetDialog).toBe(true)
+    expect(setupState.deleteConceptSetWarning).toContain('Used set')
+
+    setupState.confirmDeleteConceptSet()
+    expect(setupState.draft.strataConceptSets).toEqual([])
+    expect(setupState.showDeleteConceptSetDialog).toBe(false)
   })
 
   it('applies concept sets through a shallow mount without remounting child dialogs', async () => {
@@ -523,37 +581,103 @@ describe('CharacterizationBuilderView', () => {
 
     const snackbar = mounted.wrapper.findComponent({ name: 'AtlasSnackbar' })
     // 'characterizations.editor.utilities.export.exportError'
-    expect(snackbar.props('text')).toBe('Export failed.')
+    expect(snackbar.props('text')).toBe(tr('characterizations.editor.utilities.export.exportError'))
     // ...and specifically not the import-side key it used to reuse.
-    expect(snackbar.props('text')).not.toBe('Import failed.')
+    expect(snackbar.props('text')).not.toBe(tr('characterizations.editor.utilities.import.importError'))
     expect(snackbar.props('severity')).toBe('danger')
     expect(snackbar.props('modelValue')).toBe(true)
   })
 
-  it('routes copy and delete actions through the store and confirms delete', async () => {
+  it('exports a saved characterization as a downloaded JSON file', async () => {
     vi.mocked(getCharacterization).mockResolvedValue(success(sampleCharacterization))
-    vi.mocked(copyCharacterization).mockResolvedValue(success({
-      ...sampleCharacterization,
-      id: 99,
-      name: 'Diabetes Cohort Profile (copy)',
-    }))
-    vi.mocked(deleteCharacterization).mockResolvedValue(success(undefined as never))
+    vi.mocked(exportCharacterization).mockResolvedValue(success({ name: 'Exported characterization' }))
+    const createObjectUrl = vi.fn(() => 'blob:characterization')
+    const revokeObjectUrl = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', { value: createObjectUrl, configurable: true })
+    Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectUrl, configurable: true })
+    const originalCreateElement = document.createElement.bind(document)
+    const createElementSpy = vi.spyOn(document, 'createElement').mockImplementation(((tagName: string) => {
+      const element = originalCreateElement(tagName)
+      if (tagName === 'a') vi.spyOn(element, 'click').mockImplementation(() => undefined)
+      return element
+    }) as typeof document.createElement)
+
+    mounted = await mountBuilder('/characterizations/42', { id: '42' })
+    await mounted.wrapper.get('[data-testid="char-builder-export-icon"]').trigger('click')
+    await flushPromises()
+
+    expect(createObjectUrl).toHaveBeenCalled()
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:characterization')
+    createElementSpy.mockRestore()
+  })
+
+  it('shows an error when saving or importing a design fails', async () => {
+    vi.mocked(createCharacterization).mockResolvedValue(
+      failure(new ApiError('create failed', 500, null))
+    )
+    mounted = await mountBuilder('/characterizations/new')
+    const builder = mounted.wrapper.findComponent(CharacterizationBuilderView)
+    const setupState = (builder.vm as any).$.setupState
+    setupState.onDraftChange({ ...sampleCharacterization, id: undefined })
+
+    await setupState.handleSave()
+    expect(mounted.wrapper.findComponent({ name: 'AtlasSnackbar' }).props('text')).toBe(
+      tr('cc.viewEdit.saveError')
+    )
+
+    vi.mocked(importCharacterization).mockResolvedValue(
+      failure(new ApiError('import failed', 500, null))
+    )
+    const input = mounted.wrapper.get('[data-testid="char-builder-import-input"]')
+    Object.defineProperty(input.element, 'files', {
+      value: [{ text: async () => JSON.stringify({ name: 'Failed import' }) }],
+      configurable: true,
+    })
+    await input.trigger('change')
+    await flushPromises()
+
+    expect(mounted.wrapper.findComponent({ name: 'AtlasSnackbar' }).props('text')).toBe(
+      tr('characterizations.editor.utilities.import.importError')
+    )
+  })
+
+  it('shows an error when saving an existing characterization returns no update', async () => {
+    vi.mocked(getCharacterization).mockResolvedValue(success(sampleCharacterization))
+    vi.mocked(updateCharacterization).mockResolvedValue(
+      failure(new ApiError('update failed', 500, null))
+    )
+    mounted = await mountBuilder('/characterizations/42', { id: '42' })
+    const builder = mounted.wrapper.findComponent(CharacterizationBuilderView)
+
+    await (builder.vm as any).$.setupState.handleSave()
+    expect(mounted.wrapper.findComponent({ name: 'AtlasSnackbar' }).props('severity')).toBe('danger')
+  })
+
+  it('shows an error when saving an existing characterization throws', async () => {
+    vi.mocked(getCharacterization).mockResolvedValue(success(sampleCharacterization))
+    vi.mocked(updateCharacterization).mockRejectedValueOnce(new Error('update network error'))
+    mounted = await mountBuilder('/characterizations/42', { id: '42' })
+    const builder = mounted.wrapper.findComponent(CharacterizationBuilderView)
+
+    await (builder.vm as any).$.setupState.handleSave()
+    expect(mounted.wrapper.findComponent({ name: 'AtlasSnackbar' }).props('severity')).toBe('danger')
+  })
+
+  it('handles rejected cohort picker loads without preventing the builder from mounting', async () => {
+    vi.mocked(getCohorts).mockRejectedValueOnce(new Error('cohort network error'))
+    mounted = await mountBuilder('/characterizations/new')
+
+    expect(mounted.wrapper.find('[data-testid="char-builder-workbench"]').exists()).toBe(true)
+  })
+
+  it('does not render list-level copy and delete actions in edit mode', async () => {
+    vi.mocked(getCharacterization).mockResolvedValue(success(sampleCharacterization))
 
     mounted = await mountBuilder('/characterizations/42', { id: '42' })
     await flushPromises()
 
-    const builder = mounted.wrapper.findComponent(CharacterizationBuilderView)
-    const setupState = builder.vm as any
-
-    await setupState.$.setupState.handleSaveCopy()
-    await flushPromises()
-    expect(copyCharacterization).toHaveBeenCalledWith(42)
-
-    setupState.$.setupState.handleDeleteClick()
-    await setupState.$.setupState.confirmDelete()
-    await flushPromises()
-
-    expect(deleteCharacterization).toHaveBeenCalledWith(42)
+    expect(mounted.wrapper.find('[data-testid="char-builder-copy"]').exists()).toBe(false)
+    expect(mounted.wrapper.find('[data-testid="char-builder-delete"]').exists()).toBe(false)
   })
 
   it('rejects malformed imports and accepts a valid import payload', async () => {
@@ -567,7 +691,7 @@ describe('CharacterizationBuilderView', () => {
 
     expect(importCharacterization).not.toHaveBeenCalled()
     expect(mounted.wrapper.findComponent({ name: 'AtlasSnackbar' }).props('text')).toBe(
-      'Could not parse design JSON.'
+      tr('characterizations.editor.utilities.import.parseError')
     )
   })
 

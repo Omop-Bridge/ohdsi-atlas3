@@ -7,7 +7,7 @@
       v-if="items.length > 0"
       class="concept-set-table__filters"
     >
-      <span class="concept-set-table__filters-label">{{ t('cs.manager.filters', 'Filter').value }}:</span>
+      <span class="concept-set-table__filters-label">{{ t('cs.manager.filters').value }}:</span>
 
       <AtlasChip
         v-for="domain in availableDomains"
@@ -48,7 +48,7 @@
         class="concept-set-table__filter-chip"
         @click="standardOnly = !standardOnly"
       >
-        {{ t('search.standard', 'Standard').value }}
+        {{ t('search.standard').value }}
       </AtlasChip>
       <AtlasChip
         :variant="excludedOnly ? 'flat' : 'tonal'"
@@ -57,7 +57,7 @@
         class="concept-set-table__filter-chip"
         @click="excludedOnly = !excludedOnly"
       >
-        {{ t('columns.exclude', 'Excluded').value }}
+        {{ t('columns.exclude').value }}
       </AtlasChip>
 
       <AtlasSpacer />
@@ -69,7 +69,7 @@
         icon="mdi-close"
         @click="resetFilters"
       >
-        {{ t('common.reset', 'Reset').value }}
+        {{ t('common.reset').value }}
       </AtlasButton>
     </div>
 
@@ -86,11 +86,22 @@
         hover
         class="concept-set-table__table"
       >
-        <template
-          v-if="resolvedSourceKey"
-          #item.conceptName="{ item }"
-        >
+        <template #item.conceptName="{ item }">
+          <span
+            v-if="isConceptMissing(item)"
+            :data-testid="`concept-missing-${item.conceptId}`"
+            class="concept-set-table__missing"
+          >
+            <AtlasIcon
+              size="small"
+              color="warning"
+            >
+              mdi-alert-outline
+            </AtlasIcon>
+            {{ t('cs.manager.conceptMissingFromVocabulary').value }}
+          </span>
           <a
+            v-else-if="resolvedSourceKey"
             href="#"
             :data-testid="`concept-name-link-${item.conceptId}`"
             class="concept-name-link"
@@ -98,6 +109,9 @@
           >
             {{ item.conceptName }}
           </a>
+          <template v-else>
+            {{ item.conceptName }}
+          </template>
         </template>
 
         <!-- Descendants Toggle -->
@@ -158,6 +172,7 @@
         <!-- Standard concept badge -->
         <template #item.standardConcept="{ item }">
           <AtlasChip
+            v-if="!isConceptMissing(item)"
             :color="getConceptTypeColor(item)"
             size="xs"
             variant="tonal"
@@ -176,7 +191,7 @@
             variant="tonal"
             class="concept-set-table__chip"
           >
-            {{ t('commonErrors.invalid', 'Invalid').value }}
+            {{ t('commonErrors.invalid').value }}
           </AtlasChip>
         </template>
 
@@ -220,11 +235,8 @@
       <p class="concept-set-table__empty-text">
         {{
           hasActiveFilters
-            ? t('cs.manager.emptyFilteredMessage', 'No concepts match the active filters.').value
-            : t(
-              'cs.manager.emptyConceptsMessage',
-              'No concepts in this set yet — search for concepts or paste IDs to add them.'
-            ).value
+            ? t('cs.manager.emptyFilteredMessage').value
+            : t('cs.manager.emptyConceptsMessage').value
         }}
       </p>
       <AtlasButton
@@ -234,7 +246,7 @@
         icon="mdi-close"
         @click="resetFilters"
       >
-        {{ t('common.reset', 'Reset').value }}
+        {{ t('common.reset').value }}
       </AtlasButton>
     </div>
   </div>
@@ -243,7 +255,7 @@
 <script setup lang="ts">
 import { ref, computed, getCurrentInstance } from 'vue'
 import { useI18n } from '@/composables/useI18n'
-import type { ConceptSetItem } from '@/models/concept-set.types'
+import { isConceptMissing, type ConceptSetItem } from '@/models/concept-set.types'
 import { AtlasButton, AtlasCard, AtlasCheckbox, AtlasChip, AtlasDataTable, AtlasIcon, AtlasIconButton, AtlasSkeleton, AtlasSpacer } from '@/components/ui'
 import { getDomainColor } from '@/utils/domain-colors'
 import { useWebAPIStore } from '@/stores/webapi'
@@ -369,41 +381,41 @@ const filteredItems = computed(() => {
 
 const headers = [
   {
-    title: t('columns.descendants', 'Desc.').value,
+    title: t('columns.descendants').value,
     key: 'includeDescendants',
     sortable: false,
     width: '76px',
   },
   {
-    title: t('columns.mapped', 'Mapped').value,
+    title: t('columns.mapped').value,
     key: 'includeMapped',
     sortable: false,
     width: '72px',
   },
-  { title: t('columns.exclude', 'Excl.').value, key: 'isExcluded', sortable: false, width: '64px' },
-  { title: t('columns.conceptId', 'ID').value, key: 'conceptId', sortable: true, width: '90px' },
+  { title: t('columns.exclude').value, key: 'isExcluded', sortable: false, width: '64px' },
+  { title: t('columns.conceptId').value, key: 'conceptId', sortable: true, width: '90px' },
   {
-    title: t('columns.conceptCode', 'Code').value,
+    title: t('columns.conceptCode').value,
     key: 'conceptCode',
     sortable: true,
     width: '110px',
   },
-  { title: t('columns.conceptName', 'Name').value, key: 'conceptName', sortable: true },
-  { title: t('columns.domain', 'Domain').value, key: 'domainId', sortable: true, width: '120px' },
+  { title: t('columns.conceptName').value, key: 'conceptName', sortable: true },
+  { title: t('columns.domain').value, key: 'domainId', sortable: true, width: '120px' },
   {
-    title: t('columns.vocabulary', 'Vocabulary').value,
+    title: t('columns.vocabulary').value,
     key: 'vocabularyId',
     sortable: true,
     width: '120px',
   },
   {
-    title: t('columns.type', 'Type').value,
+    title: t('columns.type').value,
     key: 'standardConcept',
     sortable: true,
     width: '120px',
   },
   {
-    title: t('columns.validity', 'Validity').value,
+    title: t('columns.validity').value,
     key: 'invalidReason',
     sortable: true,
     width: '90px',
@@ -422,9 +434,9 @@ function getConceptTypeColor(concept: ConceptSetItem): string {
 }
 
 function getConceptTypeLabel(concept: ConceptSetItem): string {
-  if (concept.standardConcept === 'S') return t('search.standard', 'Standard').value
-  if (concept.standardConcept === 'C') return t('search.classification', 'Classification').value
-  return t('search.nonStandard', 'Non-Std').value
+  if (concept.standardConcept === 'S') return t('search.standard').value
+  if (concept.standardConcept === 'C') return t('search.classification').value
+  return t('search.nonStandard').value
 }
 
 function toggleDomainFilter(domain: string) {
@@ -466,6 +478,14 @@ function onRemove(item: ConceptSetItem) {
 </script>
 
 <style scoped>
+.concept-set-table__missing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-style: italic;
+  color: rgb(var(--v-theme-on-surface-variant));
+}
+
 .concept-set-table {
   width: 100%;
 }

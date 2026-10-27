@@ -1,7 +1,7 @@
 <!--
   ResultsFilterPanel
 
-  Compact filter strip: Domain / Analysis (multi), Cohort (single) and a free
+  Compact filter strip: Domain / Analysis / Cohort (multi) and a free
   text filter over the covariate names (#327).
   Pure controlled component — emits update:* for each binding.
 -->
@@ -13,9 +13,9 @@
   >
     <div class="results-filter__row">
       <AtlasSelect
-        :model-value="selectedDomains"
+        :model-value="draftDomains"
         :items="availableDomains"
-        :label="tv('columns.domain', 'Domain')"
+        :label="tv('columns.domain')"
         variant="outlined"
         multiple
         chips
@@ -24,14 +24,15 @@
         hide-details
         class="results-filter__select"
         data-testid="char-results-filter-domain"
+        @update:menu="onDomainMenuChange"
         @update:model-value="(v) => onDomainChange(v as string[])"
       />
       <AtlasSelect
-        :model-value="selectedAnalysisIds"
+        :model-value="draftAnalysisIds"
         :items="analysisItems"
         item-title="title"
         item-value="value"
-        :label="tv('columns.analysis', 'Analysis')"
+        :label="tv('columns.analysis')"
         variant="outlined"
         multiple
         chips
@@ -40,25 +41,30 @@
         hide-details
         class="results-filter__select"
         data-testid="char-results-filter-analysis"
+        @update:menu="onAnalysisMenuChange"
         @update:model-value="(v) => onAnalysisChange(v as number[])"
       />
       <AtlasSelect
-        :model-value="selectedCohortId"
+        :model-value="draftCohortIds"
         :items="cohortItems"
         item-title="title"
         item-value="value"
-        :label="tv('common.cohort', 'Cohort')"
+        :label="tv('common.cohort')"
         variant="outlined"
+        multiple
+        chips
+        closable-chips
         clearable
         hide-details
         class="results-filter__select"
         data-testid="char-results-filter-cohort"
-        @update:model-value="(v) => onCohortChange(v as number | null)"
+        @update:menu="onCohortMenuChange"
+        @update:model-value="(v) => onCohortChange(v as number[])"
       />
       <AtlasTextField
         :model-value="search"
-        :label="tv('common.search', 'Search')"
-        :placeholder="tv('components.characterizationResults.searchCovariates', 'Filter results by name')"
+        :label="tv('common.search')"
+        :placeholder="tv('components.characterizationResults.searchCovariates')"
         variant="outlined"
         clearable
         hide-details
@@ -71,7 +77,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { useI18n } from '@/composables/useI18n'
 import type { LinkedCohort } from '@/models/characterization.types'
@@ -88,7 +94,7 @@ interface Props {
   availableCohorts: LinkedCohort[]
   selectedAnalysisIds: number[]
   selectedDomains: string[]
-  selectedCohortId: number | null
+  selectedCohortIds: number[]
   search: string
 }
 
@@ -96,7 +102,7 @@ const props = defineProps<Props>()
 const emit = defineEmits<{
   (e: 'update:selectedAnalysisIds', value: number[]): void
   (e: 'update:selectedDomains', value: string[]): void
-  (e: 'update:selectedCohortId', value: number | null): void
+  (e: 'update:selectedCohortIds', value: number[]): void
   (e: 'update:search', value: string): void
 }>()
 
@@ -110,34 +116,97 @@ const cohortItems = computed(() =>
   props.availableCohorts.map(c => ({ title: c.name, value: c.id }))
 )
 
+const domainMenuOpen = ref(false)
+const draftDomains = ref<string[]>([...props.selectedDomains])
+const analysisMenuOpen = ref(false)
+const draftAnalysisIds = ref<number[]>([...props.selectedAnalysisIds])
+const cohortMenuOpen = ref(false)
+const draftCohortIds = ref<number[]>([...props.selectedCohortIds])
+
+watch(
+  () => props.selectedDomains,
+  (value) => {
+    if (!domainMenuOpen.value) draftDomains.value = [...value]
+  },
+  { deep: true },
+)
+
+watch(
+  () => props.selectedAnalysisIds,
+  (value) => {
+    if (!analysisMenuOpen.value) draftAnalysisIds.value = [...value]
+  },
+  { deep: true },
+)
+
+watch(
+  () => props.selectedCohortIds,
+  (value) => {
+    if (!cohortMenuOpen.value) draftCohortIds.value = [...value]
+  },
+  { deep: true },
+)
+
 function onDomainChange(value: unknown): void {
   if (Array.isArray(value)) {
-    emit(
-      'update:selectedDomains',
-      value.filter((v): v is string => typeof v === 'string')
-    )
+    draftDomains.value = value.filter((v): v is string => typeof v === 'string')
   } else if (value === null || value === undefined) {
-    emit('update:selectedDomains', [])
+    draftDomains.value = []
   }
+
+  if (!domainMenuOpen.value) emit('update:selectedDomains', draftDomains.value)
 }
 
 function onAnalysisChange(value: unknown): void {
   if (Array.isArray(value)) {
-    emit(
-      'update:selectedAnalysisIds',
-      value.filter((v): v is number => typeof v === 'number')
-    )
+    draftAnalysisIds.value = value.filter((v): v is number => typeof v === 'number')
   } else if (value === null || value === undefined) {
-    emit('update:selectedAnalysisIds', [])
+    draftAnalysisIds.value = []
   }
+
+  if (!analysisMenuOpen.value) emit('update:selectedAnalysisIds', draftAnalysisIds.value)
 }
 
 function onCohortChange(value: unknown): void {
-  if (typeof value === 'number') {
-    emit('update:selectedCohortId', value)
-  } else {
-    emit('update:selectedCohortId', null)
+  draftCohortIds.value = Array.isArray(value)
+    ? value.filter((v): v is number => typeof v === 'number')
+    : []
+
+  if (!cohortMenuOpen.value) emit('update:selectedCohortIds', draftCohortIds.value)
+}
+
+function onDomainMenuChange(isOpen: boolean): void {
+  domainMenuOpen.value = isOpen
+
+  if (isOpen) {
+    draftDomains.value = [...props.selectedDomains]
+  } else if (!sameValues(draftDomains.value, props.selectedDomains)) {
+    emit('update:selectedDomains', draftDomains.value)
   }
+}
+
+function onAnalysisMenuChange(isOpen: boolean): void {
+  analysisMenuOpen.value = isOpen
+
+  if (isOpen) {
+    draftAnalysisIds.value = [...props.selectedAnalysisIds]
+  } else if (!sameValues(draftAnalysisIds.value, props.selectedAnalysisIds)) {
+    emit('update:selectedAnalysisIds', draftAnalysisIds.value)
+  }
+}
+
+function onCohortMenuChange(isOpen: boolean): void {
+  cohortMenuOpen.value = isOpen
+
+  if (isOpen) {
+    draftCohortIds.value = [...props.selectedCohortIds]
+  } else if (!sameValues(draftCohortIds.value, props.selectedCohortIds)) {
+    emit('update:selectedCohortIds', draftCohortIds.value)
+  }
+}
+
+function sameValues<T>(left: T[], right: T[]): boolean {
+  return left.length === right.length && left.every(id => right.includes(id))
 }
 </script>
 

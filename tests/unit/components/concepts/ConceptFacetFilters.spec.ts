@@ -1,18 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { ref } from 'vue'
 import ConceptFacetFilters from '@/components/concepts/ConceptFacetFilters.vue'
 import type { FacetKey, FacetOption } from '@/composables/useConceptFacets'
+import { tr } from '../../../helpers/i18n-mock'
 
-vi.mock('@/composables/useI18n', () => ({
-  useI18n: () => ({
-    t: (key: string, fallback?: string) => ref(fallback || key),
-    locale: ref('en-US'),
-  }),
-}))
+vi.mock('@/composables/useI18n', async () => {
+  const { mockUseI18n } = await import('../../../helpers/i18n-mock')
+  return mockUseI18n
+})
 
 const vuetify = createVuetify({ components, directives })
 
@@ -44,7 +42,12 @@ describe('ConceptFacetFilters', () => {
   it('renders the Filters menu button', () => {
     const wrapper = mountComponent()
     expect(wrapper.find('.facet-filter-bar__bar').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Filters')
+    expect(wrapper.text()).toContain(tr('common.filters'))
+  })
+
+  it('renders the filter menu above an embedded concept-set editor drawer', () => {
+    const wrapper = mountComponent()
+    expect(wrapper.findComponent({ name: 'VMenu' }).props('zIndex')).toBe(2201)
   })
 
   it('shows the active-count badge when filters are active', () => {
@@ -78,8 +81,57 @@ describe('ConceptFacetFilters', () => {
     const wrapper = mountComponent({ activeFilterCount: 1 })
     const clearBtn = wrapper
       .findAll('button')
-      .find(b => b.text().includes('Clear all'))
+      .find(b => b.text().includes(tr('search.clearAllSelections')))
     await clearBtn!.trigger('click')
     expect(wrapper.emitted('clear')).toBeTruthy()
+  })
+
+  describe('filters menu', () => {
+    async function openMenu(props = {}) {
+      const wrapper = mount(ConceptFacetFilters, {
+        props: { facetOptions, selected: emptySelected, activeFilterCount: 0, ...props },
+        global: { plugins: [vuetify] },
+        attachTo: document.body,
+      })
+      wrapper.findComponent({ name: 'VMenu' }).vm.$emit('update:modelValue', true)
+      await flushPromises()
+      return wrapper
+    }
+
+    const facet = (wrapper: Awaited<ReturnType<typeof openMenu>>, label: string) =>
+      wrapper.findAllComponents({ name: 'VAutocomplete' }).find(a => a.props('label') === label)!
+
+    it('emits the new values when a facet selection changes', async () => {
+      const wrapper = await openMenu()
+
+      facet(wrapper, tr('columns.domain')).vm.$emit('update:modelValue', ['Drug'])
+
+      expect(wrapper.emitted('update:facet')!.at(-1)![0]).toEqual({
+        key: 'domainId',
+        values: ['Drug'],
+      })
+      wrapper.unmount()
+    })
+
+    it('keeps a selected value that dropped out of the options so its chip still resolves', async () => {
+      const selected = { ...emptySelected, domainId: ['Gone'] }
+      const wrapper = await openMenu({ selected, activeFilterCount: 1 })
+
+      const values = (facet(wrapper, tr('columns.domain')).props('items') as { value: string }[]).map(i => i.value)
+      expect(values).toEqual(['Drug', 'Gone'])
+      wrapper.unmount()
+    })
+
+    it('emits clear from the menu header', async () => {
+      const wrapper = await openMenu({ activeFilterCount: 1 })
+
+      const clearButtons = wrapper
+        .findAllComponents({ name: 'VBtn' })
+        .filter(b => b.text().includes(tr('search.clearAllSelections')))
+      for (const b of clearButtons) await b.trigger('click')
+
+      expect(wrapper.emitted('clear')!.length).toBe(clearButtons.length)
+      wrapper.unmount()
+    })
   })
 })

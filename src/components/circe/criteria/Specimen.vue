@@ -105,15 +105,15 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const specimenTitle = computed(() => 'a specimen of')
-const addAttributeLabel = computed(() => 'Add attribute...')
-const selectConceptSetLabel = computed(() => t('components.conceptAddBox.selectConceptSet', 'Select Concept Set').value)
+const specimenTitle = computed(() => t('components.specimen.title').value)
+const addAttributeLabel = computed(() => t('components.criteria.addAttribute').value)
+const selectConceptSetLabel = computed(() => t('components.conceptAddBox.selectConceptSet').value)
 
 const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   {
     key: 'First',
-    label: 'First Specimen',
-    description: 'Limit to first specimen in history',
+    label: t('components.specimen.attributes.first.label').value,
+    description: t('components.specimen.attributes.first.description').value,
     init: () => {
       specimenData.value.First = true
     },
@@ -124,8 +124,8 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'OccurrenceStartDate',
-    label: 'Specimen Date',
-    description: 'Filter by specimen date',
+    label: t('components.specimen.attributes.occurrenceStartDate.label').value,
+    description: t('components.specimen.attributes.occurrenceStartDate.description').value,
     kind: 'dateRange',
     componentProps: () => createSchemaFieldProps(
       ensureObjectField(specimenData.value, 'OccurrenceStartDate', () => ({ Value: '', Op: 'gte', Extent: undefined })) as DateRange
@@ -140,8 +140,8 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'SpecimenType',
-    label: 'Specimen Type',
-    description: 'Filter by specimen type',
+    label: t('criteriaAttributes.specimenType.label').value,
+    description: t('criteriaAttributes.specimenType.description').value,
     kind: 'conceptArray',
     componentProps: () => ({
       binding: {
@@ -157,12 +157,12 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
       delete specimenData.value.SpecimenType
       delete specimenData.value.SpecimenTypeExclude
     },
-    isActive: () => specimenData.value.SpecimenType != null || specimenData.value.SpecimenTypeExclude != null,
+    isActive: () => specimenData.value.SpecimenType != null,
   },
   {
     key: 'SpecimenTypeCS',
-    label: 'Specimen Type Concept Set',
-    description: 'Filter specimen type by a concept set',
+    label: t('criteriaAttributes.specimenTypeCS.label').value,
+    description: t('criteriaAttributes.specimenTypeCS.description').value,
     kind: 'conceptSet',
     componentProps: () => createConceptSetComponentProps(
       ensureObjectField(specimenData.value, 'SpecimenTypeCS', () => ({ CodesetId: undefined, IsExclusion: false })) as ConceptSetSelection,
@@ -181,8 +181,8 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'Quantity',
-    label: 'Quantity',
-    description: 'Filter by quantity',
+    label: t('criteriaAttributes.quantity.label').value,
+    description: t('criteriaAttributes.quantity.description').value,
     kind: 'numericRange',
     componentProps: () => createSchemaFieldProps(
       ensureObjectField(specimenData.value, 'Quantity', () => ({ Value: undefined, Op: 'gte', Extent: undefined })) as NumericRange
@@ -197,8 +197,8 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'Unit',
-    label: 'Unit',
-    description: 'Filter by unit',
+    label: t('criteriaAttributes.unit.label').value,
+    description: t('criteriaAttributes.unit.description').value,
     kind: 'conceptArray',
     componentProps: () => ({
       binding: {
@@ -215,8 +215,8 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'UnitCS',
-    label: 'Unit Concept Set',
-    description: 'Filter unit by a concept set',
+    label: t('criteriaAttributes.unitCS.label').value,
+    description: t('criteriaAttributes.unitCS.description').value,
     kind: 'conceptSet',
     componentProps: () => createConceptSetComponentProps(
       ensureObjectField(specimenData.value, 'UnitCS', () => ({ CodesetId: undefined, IsExclusion: false })) as ConceptSetSelection,
@@ -235,8 +235,8 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'AnatomicSite',
-    label: 'Anatomic Site',
-    description: 'Filter by anatomic site',
+    label: t('criteriaAttributes.anatomicSite.label').value,
+    description: t('criteriaAttributes.anatomicSite.description').value,
     kind: 'conceptArray',
     componentProps: () => ({
       binding: {
@@ -253,8 +253,8 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'AnatomicSiteCS',
-    label: 'Anatomic Site Concept Set',
-    description: 'Filter anatomic site by a concept set',
+    label: t('criteriaAttributes.anatomicSiteCS.label').value,
+    description: t('criteriaAttributes.anatomicSiteCS.description').value,
     kind: 'conceptSet',
     componentProps: () => createConceptSetComponentProps(
       ensureObjectField(specimenData.value, 'AnatomicSiteCS', () => ({ CodesetId: undefined, IsExclusion: false })) as ConceptSetSelection,
@@ -273,8 +273,8 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'DiseaseStatus',
-    label: 'Disease Status',
-    description: 'Filter by disease status',
+    label: t('criteriaAttributes.diseaseStatus.label').value,
+    description: t('criteriaAttributes.diseaseStatus.description').value,
     kind: 'conceptArray',
     componentProps: () => ({
       binding: {
@@ -291,8 +291,8 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'DiseaseStatusCS',
-    label: 'Disease Status Concept Set',
-    description: 'Filter disease status by a concept set',
+    label: t('criteriaAttributes.diseaseStatusCS.label').value,
+    description: t('criteriaAttributes.diseaseStatusCS.description').value,
     kind: 'conceptSet',
     componentProps: () => createConceptSetComponentProps(
       ensureObjectField(specimenData.value, 'DiseaseStatusCS', () => ({ CodesetId: undefined, IsExclusion: false })) as ConceptSetSelection,
@@ -311,8 +311,8 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'SourceId',
-    label: 'Source ID',
-    description: 'Filter by specimen source ID',
+    label: t('criteriaAttributes.sourceId.label').value,
+    description: t('criteriaAttributes.sourceId.description').value,
     kind: 'textFilter',
     componentProps: () => createSchemaFieldProps(
       ensureObjectField(specimenData.value, 'SourceId', (): TextFilter => ({ Text: '', Op: 'contains' })) as TextFilter
@@ -327,8 +327,8 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'DateAdjustment',
-    label: 'Date Adjustment',
-    description: 'Adjust event dates',
+    label: t('criteriaAttributes.dateAdjustment.label').value,
+    description: t('criteriaAttributes.dateAdjustment.description').value,
     kind: 'dateAdjustment',
     componentProps: () => createSchemaFieldProps(
       ensureObjectField(specimenData.value, 'DateAdjustment', createDefaultDateAdjustment) as DateAdjustment
@@ -343,28 +343,28 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'SpecimenSourceConcept',
-    label: 'Specimen Source Concept',
-    description: 'Filter by specimen source concept',
+    label: t('criteriaAttributes.specimenSourceConcept.label').value,
+    description: t('criteriaAttributes.specimenSourceConcept.description').value,
     kind: 'conceptSet',
     componentProps: () => createConceptSetComponentProps(
-      createConceptSetModel(specimen, 'SpecimenSourceConcept') as ConceptSetSelection,
+      specimenSourceConceptModel as ConceptSetSelection,
       props.conceptSets,
       selectConceptSetLabel.value,
       target => emit('select-concept-set', target),
       target => emit('edit-concept-set', target),
     ),
     init: () => {
-      specimenData.value.SpecimenSourceConcept = undefined
+      specimenSourceConceptModel.activate()
     },
     clear: () => {
-      delete specimenData.value.SpecimenSourceConcept
+      specimenSourceConceptModel.deactivate()
     },
-    isActive: () => 'SpecimenSourceConcept' in specimenData.value,
+    isActive: () => specimenSourceConceptModel.isActive(),
   },
   {
     key: 'Age',
-    label: 'Age',
-    description: 'Filter by age at time of event',
+    label: t('criteriaAttributes.age.label').value,
+    description: t('criteriaAttributes.age.description').value,
     kind: 'numericRange',
     componentProps: () => createSchemaFieldProps(
       ensureObjectField(specimenData.value, 'Age', () => ({ Value: undefined, Op: 'gte', Extent: undefined })) as NumericRange
@@ -379,13 +379,14 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'Gender',
-    label: 'Gender',
-    description: 'Filter by patient gender',
+    label: t('criteriaAttributes.gender.label').value,
+    description: t('criteriaAttributes.gender.description').value,
     kind: 'conceptArray',
     componentProps: () => ({
       binding: {
         concepts: toRef(specimenData.value, 'Gender'),
       } satisfies ConceptArrayBinding,
+      domainFilter: 'Gender',
     }),
     init: () => {
       specimenData.value.Gender = [] as ConceptArray
@@ -397,8 +398,8 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'GenderCS',
-    label: 'Gender Concept Set',
-    description: 'Filter gender by a concept set',
+    label: t('criteriaAttributes.genderCS.label').value,
+    description: t('criteriaAttributes.genderCS.description').value,
     kind: 'conceptSet',
     componentProps: () => createConceptSetComponentProps(
       ensureObjectField(specimenData.value, 'GenderCS', () => ({ CodesetId: undefined, IsExclusion: false })) as ConceptSetSelection,
@@ -417,8 +418,8 @@ const attributeSpecs = computed<CriteriaAttributeSpec[]>(() => [
   },
   {
     key: 'CorrelatedCriteria',
-    label: 'Nested Criteria',
-    description: 'Add nested criteria group',
+    label: t('criteriaAttributes.correlatedCriteria.label').value,
+    description: t('criteriaAttributes.correlatedCriteria.description').value,
     kind: 'criteriaGroup',
     componentProps: () => ({
       group: ensureObjectField(specimenData.value, 'CorrelatedCriteria', createDefaultCriteriaGroup) as CriteriaGroup,
@@ -448,6 +449,7 @@ const specimenData = computed<Specimen>(() => {
 const specimen = () => specimenData.value
 
 const specimenConceptSetModel = createConceptSetModel(specimen, 'CodesetId') as ConceptSetSelection
+const specimenSourceConceptModel = createConceptSetModel(specimen, 'SpecimenSourceConcept')
 
 function addAttribute(row: CriteriaAttributeSpec) {
   row.init()

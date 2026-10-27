@@ -7,7 +7,7 @@
       <AtlasTextField
         v-model="searchInput"
         :placeholder="
-          t('search.placeholder', 'Search SNOMED, ICD, RxNorm, LOINC… (Enter to search)').value
+          t('search.placeholder').value
         "
         prepend-icon="mdi-magnify"
         clearable
@@ -24,10 +24,7 @@
       <p class="concept-search__hint">
         <span v-if="validationError">{{ validationError }}</span>
         <span v-else>{{
-          t(
-            'search.vocabulariesInfo',
-            'Type at least 3 characters; press Enter to search across SNOMED, ICD, RxNorm, LOINC, and other vocabularies.'
-          )
+          t('search.vocabulariesInfo')
         }}</span>
       </p>
     </div>
@@ -54,7 +51,27 @@
       @update:facet="({ key, values }) => store.setFacet(key, values)"
       @update:result-filter="(v: string) => store.setResultFilter(v)"
       @clear="store.clearFacets()"
-    />
+    >
+      <template
+        v-if="recordCountSources.length > 0"
+        #append
+      >
+        <AtlasSelect
+          :model-value="effectiveRecordCountSource"
+          :items="recordCountSources"
+          item-title="sourceName"
+          item-value="sourceKey"
+          :label="viewCountsForLabel"
+          density="compact"
+          variant="outlined"
+          hide-details
+          :loading="store.loadingRecordCounts"
+          :menu-props="{ zIndex: 2300 }"
+          data-testid="record-count-source"
+          @update:model-value="(v: unknown) => store.setRecordCountSource(String(v))"
+        />
+      </template>
+    </ConceptFacetFilters>
 
     <ConceptAddOptions
       v-if="!store.isEmpty"
@@ -63,26 +80,6 @@
       class="concept-search__add-options"
       @add="onAddSelected"
     />
-
-    <!-- Which source the record/person counts come from (#228). -->
-    <div
-      v-if="!store.isEmpty && recordCountSources.length > 0"
-      class="concept-search__count-source"
-    >
-      <AtlasSelect
-        :model-value="effectiveRecordCountSource"
-        :items="recordCountSources"
-        item-title="sourceName"
-        item-value="sourceKey"
-        :label="viewCountsForLabel"
-        density="compact"
-        variant="outlined"
-        hide-details
-        :loading="store.loadingRecordCounts"
-        data-testid="record-count-source"
-        @update:model-value="(v: unknown) => store.setRecordCountSource(String(v))"
-      />
-    </div>
 
     <!-- Results Table -->
     <ConceptTable
@@ -95,7 +92,6 @@
       :items-per-page="store.itemsPerPage"
       :linkable="true"
       :source-key="selectedSourceKey"
-      :show-add-button="true"
       :selectable="true"
       :concepts-in-set="conceptsInSet"
       @update:page="onPageChange"
@@ -147,7 +143,7 @@ const selectedSourceKey = computed(
   () => webapiStore.getValidVocabularySource() || getSourceKey() || '',
 )
 
-const viewCountsForLabel = t('search.viewCountMessage', 'View record count for:')
+const viewCountsForLabel = t('search.viewCountMessage')
 
 // Only sources that can actually report counts. Offering a vocabulary-only
 // source here would just blank the count columns.
@@ -194,7 +190,7 @@ const isSearchValid = computed(() => {
 const validationError = computed(() => {
   const trimmed = searchInput.value.trim()
   if (trimmed.length > 0 && trimmed.length < 3) {
-    return 'Please enter at least 3 characters'
+    return t('search.minLengthHint', { min: 3 }).value
   }
   return undefined
 })
@@ -259,7 +255,7 @@ function onAddConcept(concept: Concept) {
 
   feedback.value = {
     open: true,
-    text: t('search.addedToSet', 'Added “{concept}” → {set}', {
+    text: t('search.addedToSet', {
       concept: concept.conceptName,
       set: currentSetName(),
     }).value,
@@ -285,7 +281,7 @@ function onAddSelected() {
 
   feedback.value = {
     open: true,
-    text: t('search.addedCountToSet', 'Added {count} concepts → {set}', {
+    text: t('search.addedCountToSet', {
       count: added,
       set: currentSetName(),
     }).value,
@@ -295,7 +291,7 @@ function onAddSelected() {
 function currentSetName(): string {
   return (
     conceptSetsStore.currentSet?.name ||
-    t('components.conceptSetBuilder.newConceptSet', 'New concept set').value
+    t('components.conceptSetBuilder.newConceptSet').value
   )
 }
 
@@ -318,10 +314,6 @@ function onRemoveConcept(concept: Concept) {
 }
 
 .concept-search__add-options {
-  margin-bottom: 16px;
-}
-
-.concept-search__count-source {
   margin-bottom: 16px;
 }
 

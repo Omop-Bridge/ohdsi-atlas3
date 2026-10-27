@@ -15,7 +15,7 @@
       data-testid="fa-prevalence-add-criteria"
       @click="addCriteria"
     >
-      {{ t('featureAnalyses.editor.prevalence.addCriteria', 'Add Criteria feature') }}
+      {{ t('featureAnalyses.editor.prevalence.addCriteria') }}
     </AtlasButton>
 
     <AtlasAlert
@@ -24,7 +24,7 @@
       density="compact"
       class="fa-prevalence-editor__empty"
     >
-      {{ t('featureAnalyses.editor.prevalence.empty', 'No criteria features yet.') }}
+      {{ t('featureAnalyses.editor.prevalence.empty') }}
     </AtlasAlert>
 
     <div
@@ -36,7 +36,7 @@
       <div class="fa-prevalence-editor__row-header">
         <AtlasTextField
           v-model="row.name"
-          :label="t('cc.fa.criteriaName', 'Criteria name').value"
+          :label="t('cc.fa.criteriaName').value"
           variant="outlined"
           density="compact"
           hide-details
@@ -47,7 +47,7 @@
           icon="mdi-delete-outline"
           variant="text"
           size="sm"
-          :aria-label="t('common.delete', 'Delete').value"
+          :aria-label="t('common.delete').value"
           :data-testid="`fa-prevalence-row-${index}-delete`"
           @click="removeCriteria(index)"
         />
@@ -67,6 +67,11 @@
       @local-concept-set-selected="onLocalConceptSetSelected"
       @concept-set-selected="onConceptSetSelected"
       @create-new="handleCreateNewConceptSet"
+    />
+    <ConceptSearchDialog
+      v-model="conceptSearchOpen"
+      :domain-filter="conceptSearchDomainFilter"
+      @concepts-selected="onConceptsSelected"
     />
     <!-- Concept Set Editor Side Panel (for editing/creating concept sets) -->
     <ConceptSetEditor
@@ -93,6 +98,8 @@ import { AtlasAlert, AtlasButton, AtlasIconButton, AtlasTextField } from '@/comp
 import ConceptSetEditor from '../concepts/ConceptSetEditor.vue'
 import CriteriaGroup from '@/components/circe/criteria/CriteriaGroup.vue'
 import ConceptSetSelectionDialog from '@/components/cohort/ConceptSetSelectionDialog.vue'
+import ConceptSearchDialog from '@/components/cohort/ConceptSearchDialog.vue'
+import { useCriteriaConceptSearch } from '@/composables/useCriteriaConceptSearch'
 import { useConceptSetsStore } from '@/stores/concept-sets'
 import { useI18n } from '@/composables/useI18n'
 import { useCirceConceptSetPicker } from '@/composables/useCirceConceptSetPicker'
@@ -112,6 +119,8 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+
+const { conceptSearchOpen, conceptSearchDomainFilter, onConceptsSelected } = useCriteriaConceptSearch()
 
 const getRowKey = createObjectKeyGenerator()
 

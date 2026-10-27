@@ -2,7 +2,7 @@
   <AtlasDialog
     :model-value="modelValue"
     eyebrow="SETTINGS"
-    :title="isEditing ? t('configuration.tagManagement.edit').value : t('configuration.newSource').value"
+    :title="isEditing ? t('common.edit').value : t('configuration.newSource').value"
     max-width="800"
     :persistent="true"
     @close="handleClose"
@@ -299,6 +299,7 @@ import {
 const props = defineProps<{
   modelValue: boolean
   sourceKey?: string | null
+  sourceId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -361,6 +362,15 @@ const daimonSchemas = reactive<Record<DaimonType, string>>({
   Temp: '',
 })
 
+const daimonPriorities = reactive<Record<DaimonType, number>>({
+  CDM: 0,
+  Vocabulary: 0,
+  Results: 0,
+  CEM: 0,
+  CEMResults: 0,
+  Temp: 0,
+})
+
 // Computed properties
 const isEditing = computed(() => props.sourceKey != null)
 
@@ -372,13 +382,13 @@ const dialectItems = computed(() =>
 )
 
 const showCredentials = computed(() => {
-  const noCredentialDialects = ['BIGQUERY']
+  const noCredentialDialects = ['bigquery']
   return !noCredentialDialects.includes(form.dialect)
 })
 
-const showKerberos = computed(() => form.dialect === 'IMPALA')
+const showKerberos = computed(() => form.dialect === 'impala')
 
-const showBigQuery = computed(() => form.dialect === 'BIGQUERY')
+const showBigQuery = computed(() => form.dialect === 'bigquery')
 
 // Validation rules (use tv for non-reactive string values)
 const rules = {
@@ -393,8 +403,8 @@ watch(
   async isOpen => {
     if (isOpen) {
       resetForm()
-      if (props.sourceKey) {
-        await loadSourceDetails(props.sourceKey)
+      if (props.sourceKey && props.sourceId != null) {
+        await loadSourceDetails(props.sourceId)
       }
     }
   }
@@ -419,13 +429,14 @@ function resetForm() {
   for (const type of DAIMON_TYPES) {
     daimonEnabled[type] = false
     daimonSchemas[type] = ''
+    daimonPriorities[type] = 0
   }
 }
 
 // Load existing source details for editing
-async function loadSourceDetails(sourceKey: string) {
+async function loadSourceDetails(sourceId: number) {
   try {
-    const details: SourceDetails = await getSourceDetails(sourceKey)
+    const details: SourceDetails = await getSourceDetails(sourceId)
 
     loadedSourceId.value = details.sourceId
     form.name = details.sourceName
@@ -441,6 +452,7 @@ async function loadSourceDetails(sourceKey: string) {
     for (const daimon of details.daimons) {
       daimonEnabled[daimon.daimonType] = true
       daimonSchemas[daimon.daimonType] = daimon.tableQualifier
+      daimonPriorities[daimon.daimonType] = daimon.priority
     }
   } catch (error) {
     emit('error', tv('executionStatus.values.FAILED'))
@@ -451,14 +463,13 @@ async function loadSourceDetails(sourceKey: string) {
 // Build daimons array from form state
 function buildDaimons(): DaimonRequest[] {
   const daimons: DaimonRequest[] = []
-  let priority = 0
 
   for (const type of DAIMON_TYPES) {
     if (daimonEnabled[type] && daimonSchemas[type]) {
       daimons.push({
         daimonType: type,
         tableQualifier: daimonSchemas[type],
-        priority: priority++,
+        priority: daimonPriorities[type],
       })
     }
   }

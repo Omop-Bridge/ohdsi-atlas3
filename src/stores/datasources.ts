@@ -2,7 +2,7 @@
  * Data Sources Pinia Store
  */
 import { defineStore } from 'pinia'
-import { ref, computed, triggerRef } from 'vue'
+import { ref, computed, triggerRef, watch } from 'vue'
 import type { DataSource, ReportData } from '@/models/datasource.types'
 import { isPluginReportType, type AnyReportType, type ReportType } from '@/models/datasource.types'
 import {
@@ -11,10 +11,16 @@ import {
   getClinicalDomainReport,
 } from '@/services/datasource.service'
 import { logger } from '@/utils/logger'
+import { useI18n } from '@/composables/useI18n'
+import { useLocaleStore } from '@/stores/locale'
+import { useSourceAccessFor } from '@/composables/useEntityAccess'
 
 export const useDataSourcesStore = defineStore('datasources', () => {
+  const { tv } = useI18n()
+  const sourceAccess = useSourceAccessFor()
   // State
   const sources = ref<DataSource[]>([])
+  const sourcesLoaded = ref(false)
   const selectedSourceId = ref<number | null>(null)
   const selectedReportType = ref<AnyReportType | null>(null)
   const reportCache = ref<Map<string, ReportData>>(new Map())
@@ -58,19 +64,29 @@ export const useDataSourcesStore = defineStore('datasources', () => {
     try { await fetchPromise } finally { fetchPromise = null }
   }
 
+  async function ensureDataSources() {
+    if (sourcesLoaded.value) return
+    await fetchDataSources()
+  }
+
   async function doFetchDataSources() {
     loading.value.sources = true
     error.value.sources = null
 
     try {
-      sources.value = await listDataSources()
+      const listedSources = await listDataSources()
+      sources.value = listedSources.filter(source => sourceAccess.canRead(source.sourceId))
+      sourcesLoaded.value = true
 
       // Auto-select first source if none selected
       if (sources.value.length > 0 && selectedSourceId.value === null) {
         selectedSourceId.value = sources.value[0]?.sourceId || null
       }
     } catch (err) {
-      error.value.sources = err instanceof Error ? err.message : 'Failed to load data sources'
+      error.value.sources =
+        err instanceof Error
+          ? err.message
+          : tv('dataSources.loadFailed')
       logger.error('DataSourcesStore', 'Error fetching sources', err)
     } finally {
       loading.value.sources = false
@@ -168,7 +184,10 @@ export const useDataSourcesStore = defineStore('datasources', () => {
         return
       }
 
-      error.value.report = err instanceof Error ? err.message : 'Failed to load report'
+      error.value.report =
+        err instanceof Error
+          ? err.message
+          : tv('dataSources.reportLoadFailed')
       logger.error('DataSourcesStore', 'Error fetching report', {
         reportType,
         sourceKey: source.sourceKey,
@@ -187,7 +206,19 @@ export const useDataSourcesStore = defineStore('datasources', () => {
 
   function clearCache() {
     reportCache.value.clear()
+    triggerRef(reportCache)
   }
+
+  // Report data carries translated axis/series labels (datasource-formatters),
+  // so cached reports go stale when the language changes. Refetch the open one.
+  watch(
+    () => useLocaleStore().locale,
+    () => {
+      if (reportCache.value.size === 0) return
+      clearCache()
+      void retryFetchReport()
+    }
+  )
 
   function retryFetchSources() {
     return fetchDataSources()
@@ -202,6 +233,7 @@ export const useDataSourcesStore = defineStore('datasources', () => {
   return {
     // State
     sources,
+    sourcesLoaded,
     selectedSourceId,
     selectedReportType,
     reportCache,
@@ -215,6 +247,7 @@ export const useDataSourcesStore = defineStore('datasources', () => {
 
     // Actions
     fetchDataSources,
+    ensureDataSources,
     selectDataSource,
     selectReportType,
     fetchReport,

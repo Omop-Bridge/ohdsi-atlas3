@@ -13,18 +13,17 @@ import { useIncidenceRateStore } from '@/stores/incidence-rate'
 import { useNotifications } from '@/stores/notifications'
 import type { IncidenceRate } from '@/models/incidence-rate.types'
 import { ApiError } from '@/services/api-error'
+import { tr } from '../../helpers/i18n-mock'
 
 const mockPush = vi.fn()
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: mockPush }),
 }))
 
-vi.mock('@/composables/useI18n', () => ({
-  useI18n: () => ({
-    t: (_key: string, fallback: string) => ref(fallback),
-    tv: (_key: string, fallback: string) => fallback,
-  }),
-}))
+vi.mock('@/composables/useI18n', async () => {
+  const { mockUseI18n } = await import('../../helpers/i18n-mock')
+  return mockUseI18n
+})
 
 vi.mock('@/utils/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -108,6 +107,7 @@ describe('IncidenceRatesView', () => {
     it('should render the search field and create button', () => {
       wrapper = mountView()
       expect(wrapper.find('[data-testid="incidence-rates-search"]').exists()).toBe(true)
+      expect(wrapper.findComponent({ name: 'ConceptSetFilters' }).exists()).toBe(true)
       expect(wrapper.find('[data-testid="incidence-rates-create"]').exists()).toBe(true)
     })
 
@@ -141,10 +141,10 @@ describe('IncidenceRatesView', () => {
       const headers = wrapper
         .findAll('[data-testid="incidence-rates-table"] thead th')
         .map(h => h.text())
-      expect(headers).toContain('ID')
-      expect(headers).toContain('Created')
-      expect(headers).toContain('Updated')
-      expect(headers).not.toContain('Modified')
+      expect(headers).toContain(tr('columns.id'))
+      expect(headers).toContain(tr('columns.created'))
+      expect(headers).toContain(tr('columns.updated'))
+      expect(headers).not.toContain(tr('columns.modified'))
 
       const row = wrapper
         .find('[data-testid="incidence-rates-table-row-name"]')
@@ -152,18 +152,20 @@ describe('IncidenceRatesView', () => {
       expect(row?.textContent).toContain('42')
     })
 
-    it('renders target and outcome counts from the expression', async () => {
-      vi.mocked(listIncidenceRates).mockResolvedValue({ success: true, data: [mkIR(1)] })
+    it('renders tags in the tags column', async () => {
+      vi.mocked(listIncidenceRates).mockResolvedValue({
+        success: true,
+        data: [mkIR(1, { tags: [{ id: 1, name: 'Clinical' }] })],
+      })
       wrapper = mountView()
       await flushPromises()
 
       const text = wrapper.find('[data-testid="incidence-rates-table"]').text()
       expect(text).toContain('IR 1')
-      expect(text).toContain('1') // targetIds.length
-      expect(text).toContain('2') // outcomeIds.length
+      expect(text).toContain('Clinical')
     })
 
-    it('falls back to 0 when the expression is missing', async () => {
+    it('renders rows without tags when the expression is missing', async () => {
       vi.mocked(listIncidenceRates).mockResolvedValue({
         success: true,
         data: [mkIR(1, { expression: undefined })],
@@ -173,8 +175,7 @@ describe('IncidenceRatesView', () => {
 
       const nameLink = wrapper.find('[data-testid="incidence-rates-table-row-name"]')
       expect(nameLink.exists()).toBe(true)
-      const row = nameLink.element.closest('tr')
-      expect(row?.textContent).toContain('0')
+      expect(wrapper.findAll('.analysis-data-table__tag')).toHaveLength(0)
     })
 
     it('shows the error banner when the fetch fails', async () => {
@@ -198,21 +199,42 @@ describe('IncidenceRatesView', () => {
       const input = wrapper.find('[data-testid="incidence-rates-search"] input')
       await input.setValue('mortality')
 
-      expect(wrapper.vm.searchInput).toBe('mortality')
       expect(wrapper.vm.filters.searchQuery).toBe('mortality')
       expect(wrapper.vm.page).toBe(0)
     })
 
-    it('clears the query when the field emits a null value', async () => {
+    it('clears the query from the shared search field', async () => {
       wrapper = mountView()
-      wrapper.vm.searchInput = 'mortality'
-      wrapper.vm.filters.searchQuery = 'mortality'
+      const input = wrapper.find('[data-testid="incidence-rates-search"] input')
+      await input.setValue('mortality')
+      await input.setValue('')
 
-      const field = wrapper.findComponent({ name: 'AtlasTextField' })
-      await field.vm.$emit('update:modelValue', null)
-
-      expect(wrapper.vm.searchInput).toBe('')
       expect(wrapper.vm.filters.searchQuery).toBe('')
+    })
+
+    it('filters by a clicked tag chip', async () => {
+      vi.mocked(listIncidenceRates).mockResolvedValue({
+        success: true,
+        data: [
+          mkIR(1, { tags: [{ id: 1, name: 'Clinical' }] }),
+          mkIR(2, { tags: [{ id: 2, name: 'Claims' }] }),
+        ],
+      })
+      wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.page = 2
+
+      const tag = wrapper
+        .findAll('.analysis-data-table__tag')
+        .find(chip => chip.text() === 'Clinical')
+      expect(tag).toBeDefined()
+      await tag!.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.vm.filters.selectedTags).toEqual(['Clinical'])
+      expect(wrapper.vm.page).toBe(0)
+      expect(wrapper.text()).toContain('IR 1')
+      expect(wrapper.text()).not.toContain('IR 2')
     })
   })
 
@@ -274,7 +296,7 @@ describe('IncidenceRatesView', () => {
 
       expect(copyIncidenceRate).toHaveBeenCalledWith(1)
       expect(mockPush).toHaveBeenCalledWith('/incidence-rates/99')
-      expect(notifications.items.at(-1)).toMatchObject({ severity: 'success', title: 'Incidence rate copied' })
+      expect(notifications.items.at(-1)).toMatchObject({ severity: 'success', title: tr('views.incidenceRates.copied') })
     })
 
     it('shows an error and logs when the copy fails', async () => {
@@ -287,7 +309,7 @@ describe('IncidenceRatesView', () => {
 
       await wrapper.vm.handleCopy(mkIR(1))
 
-      expect(notifications.items.at(-1)).toMatchObject({ severity: 'danger', title: 'Copy failed' })
+      expect(notifications.items.at(-1)).toMatchObject({ severity: 'danger', title: tr('commonErrors.copyFailed') })
       expect(mockPush).not.toHaveBeenCalled()
     })
 
@@ -335,7 +357,7 @@ describe('IncidenceRatesView', () => {
       await wrapper.vm.$nextTick()
 
       const buttons = wrapper.findAllComponents({ name: 'AtlasButton' })
-      const cancelButton = buttons.find(b => b.text().includes('Cancel'))
+      const cancelButton = buttons.find(b => b.text().includes(tr('common.cancel')))
       await cancelButton?.trigger('click')
 
       expect(wrapper.vm.showDelete).toBe(false)
@@ -377,7 +399,7 @@ describe('IncidenceRatesView', () => {
 
       expect(deleteIncidenceRate).toHaveBeenCalledWith(5)
       expect(listIncidenceRates).toHaveBeenCalledTimes(2)
-      expect(notifications.items.at(-1)).toMatchObject({ severity: 'success', title: 'Incidence rate deleted' })
+      expect(notifications.items.at(-1)).toMatchObject({ severity: 'success', title: tr('views.incidenceRates.deleted') })
       expect(wrapper.vm.showDelete).toBe(false)
       expect(wrapper.vm.deleteTarget).toBeNull()
     })
@@ -408,6 +430,22 @@ describe('IncidenceRatesView', () => {
   })
 
   describe('Pagination', () => {
+    it('sorts all incidence rates before selecting the current page', async () => {
+      const data = Array.from({ length: 51 }, (_, index) => mkIR(index + 1))
+      vi.mocked(listIncidenceRates).mockResolvedValue({ success: true, data })
+      wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.page = 1
+
+      const table = wrapper.findComponent({ name: 'AnalysisDataTable' })
+      table.vm.$emit('update:sortBy', [{ key: 'id', order: 'desc' }])
+      await flushPromises()
+
+      const rows = table.props('items') as IncidenceRate[]
+      expect(rows[0]?.id).toBe(26)
+      expect(rows.at(-1)?.id).toBe(2)
+    })
+
     it('renders pagination controls and paginates across pages', async () => {
       const data = Array.from({ length: 30 }, (_, i) => mkIR(i + 1))
       vi.mocked(listIncidenceRates).mockResolvedValue({ success: true, data })
@@ -417,14 +455,14 @@ describe('IncidenceRatesView', () => {
       expect(wrapper.text()).toContain('1 / 2')
 
       const buttons = wrapper.findAllComponents({ name: 'AtlasButton' })
-      const nextButton = buttons.find(b => b.text().includes('Next'))
+      const nextButton = buttons.find(b => b.text().includes(tr('configuration.userImport.wizard.buttons.next')))
       await nextButton?.trigger('click')
       await wrapper.vm.$nextTick()
 
       expect(wrapper.vm.page).toBe(1)
       expect(wrapper.text()).toContain('2 / 2')
 
-      const prevButton = wrapper.findAllComponents({ name: 'AtlasButton' }).find(b => b.text().includes('Previous'))
+      const prevButton = wrapper.findAllComponents({ name: 'AtlasButton' }).find(b => b.text().includes(tr('datatable.language.paginate.previous')))
       await prevButton?.trigger('click')
       expect(wrapper.vm.page).toBe(0)
     })

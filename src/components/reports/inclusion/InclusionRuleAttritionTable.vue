@@ -11,44 +11,82 @@
             #
           </th>
           <th class="attrition-table__col-name">
-            {{ t('components.feasibilityAttritionReport.inclusionRule', 'Inclusion rule').value }}
+            {{ t('components.feasibilityAttritionReport.inclusionRule').value }}
           </th>
           <th
             v-if="cumulativeRemaining"
             class="attrition-table__col-num"
             data-testid="inclusion-attrition-cumulative-header"
           >
-            <span :title="t('components.inclusionRuleReport.hintCumulativeRemaining', 'Patients remaining after applying this rule and all preceding rules in order').value">
-              {{ t('components.inclusionRuleReport.colCumulativeRemaining', 'Cumulative remaining').value }}
+            <span :title="t('components.inclusionRuleReport.hintCumulativeRemaining').value">
+              {{ t('components.inclusionRuleReport.colCumulativeRemaining').value }}
             </span>
           </th>
           <th
             v-if="cumulativeRemaining"
             class="attrition-table__col-num"
           >
-            <span :title="t('components.inclusionRuleReport.hintPercentOfInitial', 'Cumulative remaining as a percent of the initial entry-event count — same metric the funnel uses').value">
-              {{ t('components.inclusionRuleReport.colPercentOfInitial', '% of initial').value }}
+            <span :title="t('components.inclusionRuleReport.hintPercentOfInitial').value">
+              {{ t('components.inclusionRuleReport.colPercentOfInitial').value }}
             </span>
           </th>
           <th class="attrition-table__col-num">
-            <span :title="t('components.inclusionRuleReport.hintPersonsSatisfying', 'Patients who satisfy THIS rule independently, regardless of the other rules').value">
-              {{ t('components.inclusionRuleReport.colPersonsSatisfying', 'Persons satisfying').value }}
+            <span :title="t('components.inclusionRuleReport.hintPersonsSatisfying').value">
+              {{ t('components.inclusionRuleReport.colPersonsSatisfying').value }}
             </span>
           </th>
           <th class="attrition-table__col-num">
-            <span :title="t('components.inclusionRuleReport.hintPercentSatisfying', 'Percent of the entry-event population who satisfy this rule on its own (independent of order)').value">
-              {{ t('components.inclusionRuleReport.colPercentSatisfying', '% satisfying').value }}
+            <span :title="t('components.inclusionRuleReport.hintPercentSatisfying').value">
+              {{ t('components.inclusionRuleReport.colPercentSatisfying').value }}
             </span>
           </th>
           <th class="attrition-table__col-num">
-            <span :title="t('components.inclusionRuleReport.hintPercentExcluded', 'Marginal cost of this rule: percent of patients who satisfy every OTHER rule but fail this one. High = removing this rule would recover that share.').value">
-              {{ t('components.inclusionRuleReport.colPercentExcluded', '% excluded').value }}
+            <span :title="t('components.inclusionRuleReport.hintPercentExcluded').value">
+              {{ t('components.inclusionRuleReport.colPercentExcluded').value }}
             </span>
           </th>
           <th class="attrition-table__col-bar" />
         </tr>
       </thead>
       <tbody>
+        <tr
+          v-if="showInitialRow"
+          class="attrition-table__initial-row"
+          data-testid="inclusion-attrition-initial-row"
+        >
+          <td class="attrition-table__col-idx">
+            0
+          </td>
+          <td class="attrition-table__col-name">
+            {{ initialLabel || t('components.inclusionRuleReport.initialPopulation').value }}
+          </td>
+          <td
+            class="attrition-table__col-num"
+            data-testid="inclusion-attrition-initial-count"
+          >
+            {{ formatCount(baseCount ?? 0) }}
+          </td>
+          <td class="attrition-table__col-num">
+            {{ baseCount ? '100.00%' : '—' }}
+          </td>
+          <td class="attrition-table__col-num">
+            —
+          </td>
+          <td class="attrition-table__col-num">
+            —
+          </td>
+          <td class="attrition-table__col-num">
+            —
+          </td>
+          <td class="attrition-table__col-bar">
+            <div class="attrition-table__bar-track">
+              <div
+                class="attrition-table__bar-fill"
+                :style="initialBarStyle"
+              />
+            </div>
+          </td>
+        </tr>
         <tr
           v-for="(rule, idx) in rules"
           :key="rule.id"
@@ -103,15 +141,13 @@
     data-testid="inclusion-attrition-empty"
   >
     {{
-      t(
-        'components.expressionCartoonBindings.noInclusionRules',
-        'This cohort has no inclusion rules to report.'
-      ).value
+      t('components.expressionCartoonBindings.noInclusionRules').value
     }}
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { trackChartTheme } from '@/ui/chart-config'
 import type { InclusionRuleStatistic } from '@/models/report.types'
@@ -129,7 +165,13 @@ const props = defineProps<{
    * percentages, which use a different denominator than the funnel.
    */
   baseCount?: number
+  /** Label for the row-0 initial-population step; defaults to "Initial population". */
+  initialLabel?: string
 }>()
+
+// Row 0 mirrors the funnel's first step so the table carries the full
+// attrition on its own (#371). Needs the cumulative columns to line up.
+const showInitialRow = computed(() => !!props.cumulativeRemaining && props.baseCount !== undefined)
 
 function formatCount(n: number): string {
   return new Intl.NumberFormat().format(n)
@@ -181,6 +223,12 @@ function cumulativePercentOfInitial(idx: number): string {
   return `${((cum / base) * 100).toFixed(2)}%`
 }
 
+const initialBarStyle = computed<Record<string, string>>(() =>
+  props.baseCount
+    ? { width: '100%', background: themeColor('success', 0.85) }
+    : { width: '0%', background: 'transparent' }
+)
+
 function cumulativeBarStyle(idx: number): Record<string, string> {
   const cum = props.cumulativeRemaining?.[idx]
   if (cum === undefined) return { width: '0%', background: 'transparent' }
@@ -212,6 +260,9 @@ function cumulativeBarStyle(idx: number): Record<string, string> {
   background: var(--atlas-color-surface-variant);
   font-weight: 600;
   color: var(--atlas-color-on-surface);
+}
+.attrition-table__initial-row td {
+  font-weight: 500;
 }
 .attrition-table__col-idx {
   width: 36px;

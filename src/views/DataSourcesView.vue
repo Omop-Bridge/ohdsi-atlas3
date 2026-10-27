@@ -8,17 +8,30 @@
   >
     <div class="datasources-view">
       <!-- Two-column layout: report-type sidebar on the left,
-           main report content on the right. The compact source
-           picker sits in the page header (#actions slot) so it's
-           always visible without consuming vertical space. -->
-      <DataSourceSidebar
-        class="datasources-view__sidebar"
-        :model-value="store.selectedReportType"
-        :disabled="!store.selectedSourceId"
-        @update:model-value="handleReportTypeChange"
-      />
+           main report content on the right. Once the page header
+           scrolls away, the sidebar menu and the source picker bar
+           stick below the nav bar while the report scrolls. -->
+      <aside class="datasources-view__sidebar">
+        <DataSourceSidebar
+          class="datasources-view__sidebar-menu"
+          :model-value="store.selectedReportType"
+          :disabled="!store.selectedSourceId"
+          @update:model-value="handleReportTypeChange"
+        />
+      </aside>
 
       <div class="datasources-view__main">
+        <div class="datasources-view__toolbar">
+          <DataSourceSelector
+            :model-value="store.selectedSourceId"
+            data-testid="datasource-selector"
+            :data-sources="store.sources"
+            :loading="store.loading.sources"
+            class="datasources-view__source-picker"
+            @update:model-value="handleSourceChange"
+          />
+        </div>
+
         <!-- Error State: Sources -->
         <AtlasAlert
           v-if="store.error.sources"
@@ -33,7 +46,7 @@
               size="sm"
               @click="store.retryFetchSources"
             >
-              {{ t('common.retry', 'Retry') }}
+              {{ t('common.retry') }}
             </AtlasButton>
           </div>
         </AtlasAlert>
@@ -51,7 +64,7 @@
               size="sm"
               @click="store.retryFetchReport"
             >
-              {{ t('common.retry', 'Retry') }}
+              {{ t('common.retry') }}
             </AtlasButton>
           </div>
         </AtlasAlert>
@@ -125,7 +138,7 @@
               class="datasources-view__empty-icon"
             />
             <p class="datasources-view__empty-text">
-              {{ t('views.dataSources.reportNotImplemented', 'Report type "{type}" is not yet implemented.', { type: reportTypeLabel }).value }}
+              {{ t('views.dataSources.reportNotImplemented', { type: reportTypeLabel }).value }}
             </p>
           </div>
         </AtlasCard>
@@ -141,7 +154,7 @@
             class="datasources-view__empty-icon"
           />
           <p class="datasources-view__empty-text">
-            {{ t('views.dataSources.noSources', 'No data sources available.').value }}
+            {{ t('views.dataSources.noSources').value }}
           </p>
         </div>
 
@@ -156,22 +169,11 @@
             class="datasources-view__empty-icon"
           />
           <p class="datasources-view__empty-text">
-            {{ t('views.dataSources.selectSourceHint', 'Select a data source to view its reports.').value }}
+            {{ t('views.dataSources.selectSourceHint').value }}
           </p>
         </div>
       </div>
     </div>
-
-    <template #actions>
-      <DataSourceSelector
-        :model-value="store.selectedSourceId"
-        data-testid="datasource-selector"
-        :data-sources="store.sources"
-        :loading="store.loading.sources"
-        class="datasources-view__source-picker"
-        @update:model-value="handleSourceChange"
-      />
-    </template>
   </AtlasPageShell>
 </template>
 
@@ -229,16 +231,13 @@ const pluginReport = computed(() => {
   return parsePluginReportType(type)
 })
 
-const pageTitle = computed(() => t('dataSources.headingTitle', 'Data Sources').value)
+const pageTitle = computed(() => t('dataSources.headingTitle').value)
 
 const pageSubtitle = computed(() => {
   if (selectedSource.value && store.selectedReportType) {
     return `${selectedSource.value.sourceName} — ${reportTypeLabel.value}`
   }
-  return t(
-    'dataSources.pageSubtitle',
-    'Browse CDM data sources and run pre-built reports against them.'
-  ).value
+  return t('dataSources.pageSubtitle').value
 })
 
 const dashboardData = computed(() => {
@@ -393,6 +392,8 @@ onMounted(async () => {
   /* Two-column layout: report-type sidebar on the left, the
    * active report on the right. Falls back to stacked on narrow
    * viewports (sidebar collapses above the content). */
+  --datasources-sticky-top: var(--atlas-nav-height, 60px);
+
   display: grid;
   grid-template-columns: 240px 1fr;
   gap: 24px;
@@ -430,6 +431,23 @@ onMounted(async () => {
   }
 }
 
+/* The menu locks below the nav bar once the page header has scrolled
+ * away; it only scrolls on its own when it is taller than the viewport. */
+.datasources-view__sidebar-menu {
+  position: sticky;
+  top: var(--datasources-sticky-top);
+  max-height: calc(100vh - var(--datasources-sticky-top));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 768px) {
+  .datasources-view__sidebar-menu {
+    position: static;
+    max-height: none;
+  }
+}
+
 .datasources-view__main {
   display: flex;
   flex-direction: column;
@@ -437,9 +455,22 @@ onMounted(async () => {
   min-width: 0;
 }
 
+/* Thin bar holding the source picker; stays pinned to the top of the
+ * content column while the report scrolls underneath it. */
+.datasources-view__toolbar {
+  position: sticky;
+  top: var(--datasources-sticky-top);
+  z-index: 2;
+  display: flex;
+  justify-content: flex-end;
+  padding-block: 8px;
+  margin-block: -8px;
+  background: rgb(var(--v-theme-surface));
+}
+
 .datasources-view__source-picker {
-  /* Compact source picker in the page header. The DataSourceSelector
-   * is a v-select; constrain its width so it doesn't stretch. */
+  /* The DataSourceSelector is a v-select; constrain its width so it
+   * doesn't stretch across the bar. */
   min-width: 200px;
   max-width: 280px;
 }

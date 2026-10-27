@@ -1,38 +1,51 @@
-import { ref } from 'vue'
+import { ref, shallowRef } from 'vue'
 import {
   getCharacterizationExecution,
   getCharacterizationResultCount,
   getCharacterizationResults,
 } from '@/services/characterization.service'
-import { mapCharacterizationResults } from '@/utils/characterization-result-mapper'
+import { mapCharacterizationResultReport } from '@/utils/characterization-result-mapper'
 import type {
   CharacterizationExecution,
   DistributionStat,
   PrevalenceStat,
+  StrataCounts,
 } from '@/models/characterization.types'
+import type { CharacterizationResultsBody } from '@/services/characterization.service'
 import { logger } from '@/utils/logger'
+import { useI18n } from '@/composables/useI18n'
 
 export function useCharacterizationResults() {
+  const { tv } = useI18n()
   const execution = ref<CharacterizationExecution | null>(null)
   const resultCount = ref<number>(0)
-  const prevalence = ref<PrevalenceStat[]>([])
-  const distribution = ref<DistributionStat[]>([])
+  const prevalence = shallowRef<PrevalenceStat[]>([])
+  const distribution = shallowRef<DistributionStat[]>([])
+  const strataCounts = shallowRef<StrataCounts>({})
   const loading = ref<boolean>(false)
   const error = ref<string | null>(null)
 
-  async function load(executionId: number): Promise<boolean> {
+  let latestRequest = 0
+
+  async function load(
+    executionId: number,
+    filters: CharacterizationResultsBody = {}
+  ): Promise<boolean> {
+    const request = ++latestRequest
     execution.value = null
     resultCount.value = 0
     prevalence.value = []
     distribution.value = []
+    strataCounts.value = {}
     error.value = null
     loading.value = true
     try {
       const [execResult, countResult, resultsResult] = await Promise.all([
         getCharacterizationExecution(executionId),
         getCharacterizationResultCount(executionId),
-        getCharacterizationResults(executionId, {}),
+        getCharacterizationResults(executionId, filters),
       ])
+      if (request !== latestRequest) return false
       if (!execResult.success) throw execResult.error
 
       // Keep the execution even when the result queries fail. A run that
@@ -49,28 +62,40 @@ export function useCharacterizationResults() {
       if (!countResult.success) throw countResult.error
       if (!resultsResult.success) throw resultsResult.error
 
-      const mapped = mapCharacterizationResults(resultsResult.data)
+      // The response includes an all-prevalence aggregate report without an
+      // analysis ID. Its items repeat the rows in the concrete analysis
+      // reports, so it must not be rendered in the per-analysis result view.
+      const mapped = resultsResult.data.reports
+        .filter(report => typeof report.analysisId === 'number')
+        .map(mapCharacterizationResultReport)
       resultCount.value = countResult.data
-      prevalence.value = mapped.prevalence
-      distribution.value = mapped.distribution
+      prevalence.value = mapped.flatMap(report => report.prevalence)
+      distribution.value = mapped.flatMap(report => report.distribution)
+      strataCounts.value = resultsResult.data.strataCounts ?? {}
       return true
     } catch (err) {
-      error.value = err instanceof Error ? err.message : 'Failed to load results'
+      if (request !== latestRequest) return false
+      error.value =
+        err instanceof Error
+          ? err.message
+          : tv('characterizations.results.loadFailed')
       logger.error('CharacterizationResults', 'load failed', err)
       return false
     } finally {
-      loading.value = false
+      if (request === latestRequest) loading.value = false
     }
   }
 
   function reset(): void {
+    latestRequest++
     execution.value = null
     resultCount.value = 0
     prevalence.value = []
     distribution.value = []
+    strataCounts.value = {}
     error.value = null
     loading.value = false
   }
 
-  return { execution, resultCount, prevalence, distribution, loading, error, load, reset }
+  return { execution, resultCount, prevalence, distribution, strataCounts, loading, error, load, reset }
 }
