@@ -2,11 +2,12 @@
 
 # Atlas3 WebAPI image with an overridden trexsql plugin jar.
 #
-# The upstream ghcr.io/ohdsi/webapi:3.0.0 image bakes a trexsql jar into
+# The upstream ghcr.io/ohdsi/webapi:3.0-dev image bakes a trexsql jar into
 # /opt/webapi/plugins/trexsql.jar. This Dockerfile replaces it with a
 # specific release downloaded from the OHDSI/trex GitHub releases page.
 
-FROM ghcr.io/ohdsi/webapi:3.0.0
+#ARG WEBAPI_DIGEST=sha256:d4a2e14341c4674d94caf07f9a03726c2574be4d2d1e0f2c5ed127db59cc87c3
+FROM ghcr.io/ohdsi/webapi:3.0-dev
 
 ARG TREXSQL_VERSION=0.3.3
 ARG TREXSQL_URL=https://github.com/OHDSI/trex/releases/download/v${TREXSQL_VERSION}/trexsql-${TREXSQL_VERSION}.jar
@@ -19,4 +20,4 @@ RUN set -eux; \
     rm /tmp/trexsql.manifest
 
 LABEL org.atlas3.trexsql.version="${TREXSQL_VERSION}"
-LABEL org.atlas3.webapi.base="ghcr.io/ohdsi/webapi:3.0.0"
+LABEL org.atlas3.webapi.base="ghcr.io/ohdsi/webapi:3.0-dev"
