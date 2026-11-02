@@ -8,7 +8,7 @@
  * without further store churn.
  */
 import { defineStore } from 'pinia'
-import { getUserString, isDateInRange, matchesTerms, type DateRange } from '@/utils/list-filters'
+import { getUserString, isDateInRange, matchesFieldsOrId, type DateRange } from '@/utils/list-filters'
 import { ref, computed } from 'vue'
 
 import {
@@ -33,7 +33,7 @@ import { logger } from '@/utils/logger'
 import { debounce } from '@/utils/debounce'
 import { toggleTagFilter } from '@/utils/asset-tags'
 import { useExecutionPolling, isTerminalStatus } from '@/composables/useExecutionPolling'
-import { effectScope } from 'vue'
+import { effectScope, watch } from 'vue'
 
 export interface CharacterizationFilterState {
   searchQuery: string
@@ -103,7 +103,7 @@ export const useCharacterizationStore = defineStore('characterization', () => {
 
     const authorQuery = filters.value.author.toLowerCase()
     return characterizations.value.filter(cc => {
-      if (hasSearch && !matchesTerms([cc.name, cc.description], query)) return false
+      if (hasSearch && !matchesFieldsOrId(cc.id, [cc.name, cc.description], query)) return false
       if (hasAuthor && !getUserString(cc.createdBy).includes(authorQuery)) return false
       if (hasTags) {
         const tagNames = new Set((cc.tags ?? []).map(tag => tag.name))
@@ -480,6 +480,19 @@ export const useCharacterizationStore = defineStore('characterization', () => {
           }
         },
       })
+
+      // useExecutionPolling stops itself when a fetch or onUpdate throws, without telling
+      // the store; without this the stale entry blocks every later pollExecution for the id.
+      watch(
+        polling.isPolling,
+        active => {
+          if (!active) {
+            scope.stop()
+            cleanup()
+          }
+        },
+        { flush: 'sync' }
+      )
 
       // Wrap stop so explicit cancellation also clears the registry.
       const stopAndCleanup = () => {
